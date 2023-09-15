@@ -7,4 +7,7 @@ edition = "2021"
 
 [dependencies]
 libm = "0.2.7"
-spectrum-analyzer = "1.4.0"
+
+[dependencies.microfft]
+version = "0.5.1"
+features = ["std"]
