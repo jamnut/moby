@@ -1,3 +1,17 @@
+#![deny(clippy::all)]
+#![forbid(unsafe_code)]
+
+use error_iter::ErrorIter as _;
+use log::error;
+use pixels::{Error, Pixels, SurfaceTexture};
+use plotters::prelude::*;
+use plotters::backend::BGRXPixel;
+use winit::dpi::LogicalSize;
+use winit::event::{Event, VirtualKeyCode};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use winit_input_helper::WinitInputHelper;
+
 use libm::sin;
 use std::f32::consts::PI;
 
@@ -11,7 +25,7 @@ fn sin32(x: f32) -> f32 {
     sin(x as f64) as f32
 }
 
-fn main() {
+fn old_main() {
     let mut samples: [f32; NUM_SAMPLES] = [0.0; NUM_SAMPLES];
     generate_sine_wave(&mut samples, 256.0, 0.0, 1.0);
     // generate_sine_wave(&mut samples, 250.0, 0.0, 1.0);
@@ -211,6 +225,96 @@ fn find_median(arr: &mut [f32]) -> f32 {
     } else {
         // If the array has an odd number of elements, return the middle value
         arr[len / 2]
+    }
+}
+
+// ----------------------------------------------------------------------
+// ----------------------------------------------------------------------
+// ----------------------------------------------------------------------
+
+const WIDTH: usize = 800; //320;
+const HEIGHT: usize = 512; //240;
+const BOX_SIZE: i16 = 10; //64;
+
+/// Representation of the application state. In this example, a box will bounce around the screen.
+fn draw(frame: &mut [u8]) {
+
+    let root_drawing_area 
+        = BitMapBackend::<BGRXPixel>::with_buffer_and_format(frame, (WIDTH as u32, HEIGHT as u32))
+        .unwrap().into_drawing_area();
+
+    root_drawing_area.fill(&WHITE).unwrap();
+
+    let mut chart = ChartBuilder::on(&root_drawing_area)
+        .build_cartesian_2d(-3.14..3.14, -1.2..1.2)
+        .unwrap();
+
+    chart.draw_series(LineSeries::new(
+        (-314..314).map(|x| x as f64 / 100.0).map(|x| (x, x.sin())),
+        &RED
+    )).unwrap();
+
+    root_drawing_area.present().unwrap();
+
+}
+
+fn main() -> Result<(), Error> {
+    env_logger::init();
+
+    let event_loop = EventLoop::new();
+    let mut input = WinitInputHelper::new();
+    let window = {
+        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
+        WindowBuilder::new()
+        .with_title("BlueIQ")
+        .with_inner_size(size)
+        .with_min_inner_size(size)
+        .build(&event_loop)
+        .unwrap()
+    };
+    
+    let mut pixels = {
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        Pixels::new(WIDTH as u32, HEIGHT as u32, surface_texture)?
+    };
+    
+    event_loop.run(move |event, _, control_flow| {
+        // Draw the current frame
+        if let Event::RedrawRequested(_) = event {
+            draw(pixels.frame_mut());
+            if let Err(err) = pixels.render() {
+                log_error("pixels.render", err);
+                *control_flow = ControlFlow::Exit;
+                return;
+            }
+        }
+
+        // Handle input events
+        if input.update(&event) {
+            if input.key_pressed(VirtualKeyCode::Escape) || input.close_requested() {
+                *control_flow = ControlFlow::Exit;
+                return;
+            }
+
+            if let Some(size) = input.window_resized() {
+                if let Err(err) = pixels.resize_surface(size.width, size.height) {
+                    log_error("pixels.resize_surface", err);
+                    *control_flow = ControlFlow::Exit;
+                    return;
+                }
+            }
+
+            // Update internal state and request a redraw
+            window.request_redraw();
+        }
+    });
+}
+
+fn log_error<E: std::error::Error + 'static>(method_name: &str, err: E) {
+    error!("{method_name}() failed: {err}");
+    for source in err.sources().skip(1) {
+        error!("  Caused by: {source}");
     }
 }
 
