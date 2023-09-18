@@ -1,6 +1,8 @@
 #![deny(clippy::all)]
+#![deny(clippy::pedantic)]
 #![forbid(unsafe_code)]
 
+// use env_logger::fmt::ColorSpec;
 use error_iter::ErrorIter as _;
 use log::error;
 use pixels::{Error, Pixels, SurfaceTexture};
@@ -12,70 +14,11 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 use winit_input_helper::WinitInputHelper;
 
-use libm::sin;
-use std::f32::consts::PI;
-
-const SAMPLE_RATE: u32 = 2048;
-const NUM_SAMPLES: usize = 1024;
-const WINDOW_SIZE: usize = 256;
-const BIN_SIZE: f32 = SAMPLE_RATE as f32 / NUM_SAMPLES as f32;
+// use libm::sin;
+use std::f64::consts::PI;
 
 
-fn sin32(x: f32) -> f32 {
-    sin(x as f64) as f32
-}
-
-fn old_main() {
-    let mut samples: [f32; NUM_SAMPLES] = [0.0; NUM_SAMPLES];
-    generate_sine_wave(&mut samples, 256.0, 0.0, 1.0);
-    // generate_sine_wave(&mut samples, 250.0, 0.0, 1.0);
-    let (max_signal_value, max_signl_index) = normalize_array(&mut samples);
-
-    let spectrum = microfft::real::rfft_1024(&mut samples);
-    spectrum[0].im = 0.0;
-
-    let mut amplitudes: [f32; NUM_SAMPLES/2] 
-        = spectrum
-        .iter()
-        .map(|c| c.norm())
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-    let (max_amplitude, max_amplitude_index) = normalize_array(&mut amplitudes);
-
-    let lower_bin = (max_amplitude_index - 15) as f32 * BIN_SIZE;
-    let upper_bin = (max_amplitude_index + 15) as f32 * BIN_SIZE;
-
-    for (i, magnitude) in amplitudes.iter().enumerate() {
-        if i as f32 * BIN_SIZE > lower_bin && i as f32 * BIN_SIZE < upper_bin {
-            let stars = stars(magnitude * 100.0);
-            let star_string: String = stars.iter().collect();        
-            println!("{}  {magnitude:.3}  {}", i as f32 * BIN_SIZE, star_string);
-        }
-    }
-
-    let median_amplitude = find_median(&mut amplitudes);
-    let db_median = db(max_amplitude, median_amplitude);
-
-    println!("max signal value: {:.3} at index {}", max_signal_value, max_signl_index);
-    println!("max amplitude: {:.3} at {}Hz", max_amplitude, max_amplitude_index as f32 * BIN_SIZE);
-    println!("median amplitude: {:.3}  {:.3} dB", median_amplitude, db_median);
-
-    let center_index = 256/BIN_SIZE as usize;
-    let slice_start = center_index - 4;
-    let slice_end = center_index + 5;
-    let range = (slice_end - slice_start) as f32 * BIN_SIZE;
-
-    assert!(slice_end < 512);
-
-    let slice = &amplitudes[slice_start..=slice_end];
-
-    let center = sinc_center_index(slice, range) + slice_start as f32;
-    println!("center: {:.1}", center*BIN_SIZE);
-
-}
-
-fn db(value1: f32, value2: f32) -> f32 {
+fn _db(value1: f32, value2: f32) -> f32 {
     // Calculate the dB difference using the formula: dB = 10 * log10(value1 / value2)
     if value1 == 0.0 || value2 == 0.0 {
         // Avoid division by zero and return negative infinity in such cases
@@ -86,7 +29,7 @@ fn db(value1: f32, value2: f32) -> f32 {
 }
 
 
-fn normalize_array<T>(data: &mut T) -> (f32, usize)
+fn _normalize_array<T>(data: &mut T) -> (f32, usize)
 where
     T: AsMut<[f32]> + AsRef<[f32]>,
 {
@@ -106,7 +49,7 @@ where
 
     // Normalize the data
     if max_abs_value > 0.0 {
-        for element in data.as_mut().iter_mut() {
+        for element in &mut *data.as_mut() {
             *element /= max_abs_value;
         }
     }
@@ -115,105 +58,7 @@ where
 }
 
 
-
-fn generate_sine_wave(data: &mut [f32; 1024], freq_hz: f32, _phase_rad: f32, amp: f32) {
-
-    let time_step = 1.0 / SAMPLE_RATE as f32;
-    let angular_freq = 2.0*PI * freq_hz;
-
-    for (i, value) in data.iter_mut().enumerate().take(WINDOW_SIZE) {
-        let t: f32 = i as f32 * time_step;
-        *value = *value + sin32(angular_freq * t) * amp;
-    }
-
-    for i in WINDOW_SIZE..data.len() {
-        data[i] = 0.0;
-    }
-}
-
-
-fn stars(length: f32) -> Vec<char> {
-    let mut stars = Vec::with_capacity(length as usize);
-    for _ in 0..length as usize {
-        stars.push('*');
-    }
-    stars
-}
-
-fn sinc_center_index(data: &[f32], frequency_range: f32) -> f32 {
-    // Define the sinc function
-    let sinc = |x: f32| {
-        if x == 0.0 {
-            1.0
-        } else {
-            (std::f32::consts::PI * x).sin() / (std::f32::consts::PI * x)
-        }
-    };
-
-    let data_len = data.len() as isize;
-    let center_index = (data_len / 2) as f32; // Initial guess for the center index
-
-    // Calculate the width of the sinc function based on the frequency range
-    let sinc_width = frequency_range / (1.0 / data_len as f32);
-
-    // Find the fractional index with the highest convolution result
-    let (best_center_index, max_convolution_result) = (0..(data_len*10))
-        .map(|i| {
-            let offset = (i as f32)/10.0 - center_index;
-            let convolution_result = (data[(i/10) as usize] * sinc(offset / sinc_width)) as f32;
-            (i as f32/10.0, convolution_result)
-        })
-        .max_by(|&(_, a), &(_, b)| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or((center_index, 0.0));
-
-    if max_convolution_result > 0.0 {
-        best_center_index
-    } else {
-        center_index // If no better center is found, return the initial guess
-    }
-}
-
-fn _binary_sinc_center_index(data: &[f32], frequency_range: f32) -> f32 {
-    // Define the sinc function
-    let sinc = |x: f32| {
-        if x == 0.0 {
-            1.0
-        } else {
-            (std::f32::consts::PI * x).sin() / (std::f32::consts::PI * x)
-        }
-    };
-
-    let data_len = data.len() as f32;
-    let center_index = (data_len / 2.0) as isize; // Initial guess for the center index
-
-    // Calculate the width of the sinc function based on the frequency range
-    let sinc_width = frequency_range / (1.0 / data_len);
-
-    let mut left = center_index;
-    let mut right = center_index;
-    let mut best_center_index = center_index as f32;
-
-    while left >= 0 || right < data_len as isize {
-        // Calculate convolution results for both sides
-        let left_offset = left as f32 - center_index as f32;
-        let right_offset = right as f32 - center_index as f32;
-        let left_result = data[left as usize] * sinc(left_offset / sinc_width);
-        let right_result = data[right as usize] * sinc(right_offset / sinc_width);
-
-        // Check if left or right side has a higher convolution result
-        if left_result >= right_result && left >= 0 {
-            best_center_index = left_offset;
-            left -= 1;
-        } else if right < data_len as isize {
-            best_center_index = right_offset;
-            right += 1;
-        }
-    }
-
-    best_center_index
-}
-
-fn find_median(arr: &mut [f32]) -> f32 {
+fn _find_median(arr: &mut [f32]) -> f32 {
     arr.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let len = arr.len();
 
@@ -230,29 +75,78 @@ fn find_median(arr: &mut [f32]) -> f32 {
 
 // ----------------------------------------------------------------------
 // ----------------------------------------------------------------------
-// ----------------------------------------------------------------------
 
-const WIDTH: usize = 800; //320;
-const HEIGHT: usize = 512; //240;
-const BOX_SIZE: i16 = 10; //64;
+fn sine(samples: i32, freq: f64, phase: f64) -> impl Iterator<Item = (i32, f64)> {
+    (0..samples)
+    .map(move |x| {
+        let samples = f64::from(samples);
+        let phase: f64 = (x as f64) + phase * samples / freq;
+        let radians = 2.0 * PI * phase / samples;
+        (x, (freq * radians).sin())
+    })
+}
+
+
+const WIDTH: u32 = 1200; //320;
+const HEIGHT: u32 = 800; //240;
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
 fn draw(frame: &mut [u8]) {
 
     let root_drawing_area 
-        = BitMapBackend::<BGRXPixel>::with_buffer_and_format(frame, (WIDTH as u32, HEIGHT as u32))
-        .unwrap().into_drawing_area();
-
+        = BitMapBackend::<BGRXPixel>::with_buffer_and_format(frame, (WIDTH, HEIGHT))
+            .unwrap().into_drawing_area();
     root_drawing_area.fill(&WHITE).unwrap();
 
-    let mut chart = ChartBuilder::on(&root_drawing_area)
-        .build_cartesian_2d(-3.14..3.14, -1.2..1.2)
+    let (upper, lower) = root_drawing_area.split_vertically(240);
+    let upper = upper.margin(0, 0, 0, 20);
+    let lower = lower.margin(0, 0, 0, 20);
+
+    let mut upper_chart = ChartBuilder::on(&upper)
+        .caption("Sin Waves", ("sans-serif", 40))
+        .set_label_area_size(LabelAreaPosition::Left, 40)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
+        .build_cartesian_2d(0..200, -2.1..2.1)
         .unwrap();
 
-    chart.draw_series(LineSeries::new(
-        (-314..314).map(|x| x as f64 / 100.0).map(|x| (x, x.sin())),
-        &RED
-    )).unwrap();
+    let mut lower_chart = ChartBuilder::on(&lower)
+        .caption("FFT", ("sans-serif", 40))
+        .set_label_area_size(LabelAreaPosition::Left, 40)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
+        .build_cartesian_2d(0..512, 0.0..100.0)
+        .unwrap();
+
+    upper_chart.configure_mesh().draw().unwrap();
+    lower_chart.configure_mesh().draw().unwrap();
+
+    const FREQ: f64 = 90.0;
+
+    let s1 = sine(200, FREQ, 0.0);
+    // let s2 = sine(200, 4.9, 0.1);
+
+    // let s1a = sine(200, FREQ, 0.0);
+    // let s2a = sine(200, 4.9, 0.1);
+    // let s3 = s1a.zip(s2a).map(|(x, y)| (x.0, x.1 + y.1));
+
+    upper_chart.draw_series( LineSeries::new( s1, BLACK.stroke_width(3)) ).unwrap();
+    // upper_chart.draw_series( LineSeries::new( s2, GREEN.stroke_width(3)) ).unwrap();
+    // upper_chart.draw_series( LineSeries::new( s3, BLUE.stroke_width(3)) ).unwrap();
+
+    let s4: Vec<f32> = sine(200, FREQ, 0.0).map(|(_x,y)| y as f32).collect();
+    let s5: Vec<f32> = sine(200, FREQ + 1.0, 0.0).map(|(_x,y)| y as f32).collect();
+    let s6: Vec<f32> = s4.iter().zip(s5.iter()).map(|(x,y)| x + y).collect();
+
+    let mut samples: [f32; 1024] = [0.0; 1024];
+    samples[0..200].copy_from_slice(&s6[..200]);
+
+    let spectrum = microfft::real::rfft_1024(&mut samples);
+    spectrum[0].im = 0.0;
+
+    let amplitudes: Vec<_> = spectrum.iter().map(|c| c.norm() as i32).collect();
+    let amplitudes: Vec<(i32, f64)> = amplitudes.iter().enumerate().map(|(x, y)| (x as i32, *y as f64)).collect();
+    // let max: f64 = amplitudes.iter().fold(0.0, |a, &b| a.max(b.1));
+    
+    lower_chart.draw_series( LineSeries::new( amplitudes, BLACK.stroke_width(3)) ).unwrap();
 
     root_drawing_area.present().unwrap();
 
@@ -264,9 +158,9 @@ fn main() -> Result<(), Error> {
     let event_loop = EventLoop::new();
     let mut input = WinitInputHelper::new();
     let window = {
-        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
+        let size = LogicalSize::new(WIDTH, HEIGHT);
         WindowBuilder::new()
-        .with_title("BlueIQ")
+        .with_title("Finding Moby")
         .with_inner_size(size)
         .with_min_inner_size(size)
         .build(&event_loop)
@@ -276,10 +170,12 @@ fn main() -> Result<(), Error> {
     let mut pixels = {
         let window_size = window.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(WIDTH as u32, HEIGHT as u32, surface_texture)?
+        Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
     
     event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
         // Draw the current frame
         if let Event::RedrawRequested(_) = event {
             draw(pixels.frame_mut());
