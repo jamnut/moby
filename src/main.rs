@@ -10,7 +10,7 @@ use plotters::prelude::*;
 use plotters::backend::BGRXPixel;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode};
-use winit::event_loop::{ControlFlow, EventLoop};
+use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use winit_input_helper::WinitInputHelper;
 
@@ -76,22 +76,40 @@ fn _find_median(arr: &mut [f32]) -> f32 {
 // ----------------------------------------------------------------------
 // ----------------------------------------------------------------------
 
-fn sine(samples: i32, freq: f64, phase: f64) -> impl Iterator<Item = (i32, f64)> {
-    (0..samples)
-    .map(move |x| {
-        let samples = f64::from(samples);
-        let phase: f64 = (x as f64) + phase * samples / freq;
-        let radians = 2.0 * PI * phase / samples;
-        (x, (freq * radians).sin())
-    })
+fn sine(samples: i32, freq: f64, offset: f64) ->  Vec<(i32, f64)> {
+    (0..samples).map(move |x| {
+        let phase: f64 = 2.*PI * (x as f64 * freq / samples as f64);
+        (x, (phase + offset*2.*PI).sin())
+    }).collect()
 }
 
+fn vec_add(a: &Vec<(i32, f64)>, b: &Vec<(i32, f64)>) -> Vec<(i32, f64)> {
+    a.iter().zip(b.iter()).map(|(x,y)| (x.0, x.1 + y.1)).collect()
+}
 
 const WIDTH: u32 = 1200; //320;
 const HEIGHT: u32 = 800; //240;
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
-fn draw(frame: &mut [u8]) {
+fn draw(frame: &mut [u8], m: &Model) {
+    
+    let s1: Vec<(i32, f64)> = sine(m.sample_count, m.s1_freq, m.s1_offset);
+    let s2: Vec<(i32, f64)> = sine(m.sample_count, m.s2_freq, m.s2_offset);
+    let s3: Vec<(i32, f64)> = vec_add(&s1, &s2);
+    let s4: Vec<f32> = s3.iter().map(|x| x.1 as f32).collect();
+
+    let mut samples: [f32; 1024] = [0.0; 1024];
+    samples[0..200].copy_from_slice(&s4[..200]);
+
+    let spectrum = microfft::real::rfft_1024(&mut samples);
+    spectrum[0].im = 0.0;
+
+    let amplitudes: Vec<f64> 
+            = spectrum.iter()
+                .map(|c| c.norm() as f64)
+                .collect();
+
+    let max_amp: f64 = amplitudes.iter().fold(0.0, |a, &b| a.max(b));
 
     let root_drawing_area 
         = BitMapBackend::<BGRXPixel>::with_buffer_and_format(frame, (WIDTH, HEIGHT))
@@ -99,54 +117,47 @@ fn draw(frame: &mut [u8]) {
     root_drawing_area.fill(&WHITE).unwrap();
 
     let (upper, lower) = root_drawing_area.split_vertically(240);
+
     let upper = upper.margin(0, 0, 0, 20);
     let lower = lower.margin(0, 0, 0, 20);
 
+    let upper_caption = format!("{} Hz  {} Hz", m.s1_freq*10.0, m.s2_freq*10.0);
+
     let mut upper_chart = ChartBuilder::on(&upper)
-        .caption("Sin Waves", ("sans-serif", 40))
+        .caption(upper_caption, ("sans-serif", 40))
         .set_label_area_size(LabelAreaPosition::Left, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
         .build_cartesian_2d(0..200, -2.1..2.1)
         .unwrap();
 
+    let lower_captiion = format!("Bin {:.2} Hz  -  Max {:.0}", m.sample_count as f64 / 1024.0 * 10.0, max_amp);
+
     let mut lower_chart = ChartBuilder::on(&lower)
-        .caption("FFT", ("sans-serif", 40))
+        .caption(lower_captiion, ("sans-serif", 40))
         .set_label_area_size(LabelAreaPosition::Left, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d(0..512, 0.0..100.0)
+        .build_cartesian_2d((0..512).into_segmented(), 0..(max_amp*1.1) as i32)
         .unwrap();
 
     upper_chart.configure_mesh().draw().unwrap();
     lower_chart.configure_mesh().draw().unwrap();
 
-    const FREQ: f64 = 90.0;
+    upper_chart.draw_series( LineSeries::new( s1, RED.stroke_width(1)) ).unwrap();
+    upper_chart.draw_series( LineSeries::new( s2, BLUE.stroke_width(2)) ).unwrap();
+    upper_chart.draw_series( LineSeries::new( s3, BLACK.stroke_width(4)) ).unwrap();
 
-    let s1 = sine(200, FREQ, 0.0);
-    // let s2 = sine(200, 4.9, 0.1);
+    lower_chart.draw_series(amplitudes.iter().enumerate().map(|(x, y)| {
+        let x0 = SegmentValue::Exact(x as i32);
+        let x1 = SegmentValue::Exact(x as i32 + 1);
+        let y0: i32 = *y as i32;
+        let bar = Rectangle::new([(x0, 0), (x1, y0)], BLUE.filled());
+        // bar.set_margin(0, 0, 5, 5);
+        bar
+    }))
+    .unwrap();
 
-    // let s1a = sine(200, FREQ, 0.0);
-    // let s2a = sine(200, 4.9, 0.1);
-    // let s3 = s1a.zip(s2a).map(|(x, y)| (x.0, x.1 + y.1));
 
-    upper_chart.draw_series( LineSeries::new( s1, BLACK.stroke_width(3)) ).unwrap();
-    // upper_chart.draw_series( LineSeries::new( s2, GREEN.stroke_width(3)) ).unwrap();
-    // upper_chart.draw_series( LineSeries::new( s3, BLUE.stroke_width(3)) ).unwrap();
 
-    let s4: Vec<f32> = sine(200, FREQ, 0.0).map(|(_x,y)| y as f32).collect();
-    let s5: Vec<f32> = sine(200, FREQ + 1.0, 0.0).map(|(_x,y)| y as f32).collect();
-    let s6: Vec<f32> = s4.iter().zip(s5.iter()).map(|(x,y)| x + y).collect();
-
-    let mut samples: [f32; 1024] = [0.0; 1024];
-    samples[0..200].copy_from_slice(&s6[..200]);
-
-    let spectrum = microfft::real::rfft_1024(&mut samples);
-    spectrum[0].im = 0.0;
-
-    let amplitudes: Vec<_> = spectrum.iter().map(|c| c.norm() as i32).collect();
-    let amplitudes: Vec<(i32, f64)> = amplitudes.iter().enumerate().map(|(x, y)| (x as i32, *y as f64)).collect();
-    // let max: f64 = amplitudes.iter().fold(0.0, |a, &b| a.max(b.1));
-    
-    lower_chart.draw_series( LineSeries::new( amplitudes, BLACK.stroke_width(3)) ).unwrap();
 
     root_drawing_area.present().unwrap();
 
@@ -173,15 +184,17 @@ fn main() -> Result<(), Error> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
     
+    let mut model = Model::new(200);
+
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+        control_flow.set_wait();
 
         // Draw the current frame
         if let Event::RedrawRequested(_) = event {
-            draw(pixels.frame_mut());
+            draw(pixels.frame_mut(), &model);
             if let Err(err) = pixels.render() {
                 log_error("pixels.render", err);
-                *control_flow = ControlFlow::Exit;
+                control_flow.set_exit();
                 return;
             }
         }
@@ -189,14 +202,18 @@ fn main() -> Result<(), Error> {
         // Handle input events
         if input.update(&event) {
             if input.key_pressed(VirtualKeyCode::Escape) || input.close_requested() {
-                *control_flow = ControlFlow::Exit;
+                control_flow.set_exit();
                 return;
+            }
+
+            if input.key_pressed(VirtualKeyCode::Equals) {
+                model.s2_freq += 1.0;
             }
 
             if let Some(size) = input.window_resized() {
                 if let Err(err) = pixels.resize_surface(size.width, size.height) {
                     log_error("pixels.resize_surface", err);
-                    *control_flow = ControlFlow::Exit;
+                    control_flow.set_exit();
                     return;
                 }
             }
@@ -214,3 +231,26 @@ fn log_error<E: std::error::Error + 'static>(method_name: &str, err: E) {
     }
 }
 
+struct Model {
+
+    sample_count: i32,
+
+    s1_freq: f64,
+    s2_freq: f64,
+
+    s1_offset: f64,
+    s2_offset: f64,
+}
+
+impl Model {
+    
+    fn new(sample_count: i32) -> Self {
+        Self {
+            sample_count,
+            s1_freq: 10.0,
+            s2_freq: 30.0,
+            s1_offset: 0.0,
+            s2_offset: 0.0,
+        }
+    }
+}
