@@ -7,6 +7,7 @@ mod draw;
 use std::fs::File;
 use std::io::{self, Read};
 
+
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
@@ -14,8 +15,8 @@ use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEve
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
-const WIDTH: u32 = 1200; //320;
-const HEIGHT: u32 = 800; //240;
+const WIDTH: u32 = 1200;
+const HEIGHT: u32 = 800;
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
 fn main() -> Result<(), Error> {
@@ -37,7 +38,7 @@ fn main() -> Result<(), Error> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
 
-    let mut model = Model::new(1);
+    let mut m = Model::new(28);
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_wait();
@@ -54,7 +55,7 @@ fn main() -> Result<(), Error> {
             }
 
             Event::RedrawRequested(_) => {
-                draw::draw(pixels.frame_mut(), &model);
+                draw::draw(pixels.frame_mut(), &m);
                 if let Err(err) = pixels.render() {
                     println!("Error: {err:?}");
                     control_flow.set_exit();
@@ -79,8 +80,10 @@ fn main() -> Result<(), Error> {
                 ..
             } => {
                 match key {
-                    VirtualKeyCode::Right => model.next(),
-                    VirtualKeyCode::Left => model.prev(),
+                    VirtualKeyCode::Up => m.next(),
+                    VirtualKeyCode::Down => m.prev(),
+                    VirtualKeyCode::Left => m.window_start = m.window_start.saturating_sub(100),
+                    VirtualKeyCode::Right => m.window_start = 3800.min(m.window_start + 100),
                     VirtualKeyCode::Q => control_flow.set_exit(),
                     _ => println!("Key pressed {key:?}"),
                 };
@@ -128,6 +131,7 @@ pub struct Model {
     aiff_name: String,
     aiff_path: String,
     aiff_data: Vec<i16>,
+    window_start: usize,
 }
 
 impl Model {
@@ -135,7 +139,7 @@ impl Model {
         let (aiff_name, aiff_path) = aiff_name(aiff_number);
         let aiff_data = aiff_samples(&aiff_path).unwrap();
 
-        Self { aiff_number, aiff_name, aiff_path, aiff_data }
+        Self { aiff_number, aiff_name, aiff_path, aiff_data, window_start: 0 }
     }
 
     fn set_aiff(&mut self, aiff_number: usize) {

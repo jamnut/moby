@@ -8,10 +8,14 @@ edition = "2021"
 [dependencies]
 byteorder = "1.4.3"
 libm = "0.2"
+num = "0.4.1"
 pixels = "0.13"
-plotters = "0.3.4"
 winit = "0.28"
 
 [dependencies.microfft]
 version = "0.5"
 features = ["std"]
+
+[dependencies.plotters]
+version = "0.3"
+path = "//Users/steveweeks/dev/Rust/plotters/plotters"
