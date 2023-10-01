@@ -4,9 +4,9 @@
 mod draw;
 mod signal;
 
+use core::ops::Range;
 use std::fs::File;
 use std::io::{self, Read};
-use core::ops::Range;
 
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use draw::draw_upper_signal;
@@ -16,8 +16,8 @@ use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEve
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
-use crate::signal::*;
 use crate::draw::*;
+use crate::signal::*;
 
 const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 800;
@@ -70,9 +70,8 @@ fn main() -> Result<(), Error> {
                 // window.request_redraw();
             }
 
-            Event::WindowEvent { 
-                event:
-                    WindowEvent::ModifiersChanged(mods),
+            Event::WindowEvent {
+                event: WindowEvent::ModifiersChanged(mods),
                 ..
             } => {
                 m.modifiers = mods;
@@ -112,7 +111,6 @@ fn main() -> Result<(), Error> {
         }
     })
 }
-
 
 // Takes a integer and returns the file name
 fn aiff_name(file_number: usize) -> (String, String) {
@@ -155,7 +153,6 @@ pub struct Model<'a> {
     modifiers: winit::event::ModifiersState,
     max64: Vec<(fn(&Model, Range<usize>) -> f64, &'a str)>,
     upper: Vec<fn(draw::MyDrawingArea, &Model) -> Result<(), Box<dyn std::error::Error>>>,
-
 }
 
 impl Model<'_> {
@@ -168,12 +165,16 @@ impl Model<'_> {
             aiff_name,
             full_name: aiff_path,
             aiff_data,
-            fft_size: vec![1024,512,256,128],
+            fft_size: vec![1024, 512, 256, 128],
             start: 2000,
             window: 200,
             slide: vec![10, 50, 100, 200],
             modifiers: winit::event::ModifiersState::default(),
-            max64: vec![(max_window, "nwindow"), (max_none, "nnone"), (max_all, "nall")],
+            max64: vec![
+                (max_window, "nwindow"),
+                (max_none, "nnone"),
+                (max_all, "nall"),
+            ],
             upper: vec![draw_upper_fft, draw_upper_signal],
         }
     }
@@ -205,33 +206,31 @@ impl Model<'_> {
 
     fn next_window(&mut self) {
         use winit::event::*;
-        self.start = (4000 - self.window).min(self.start +
-            match self.modifiers {
-                ModifiersState::SHIFT => 10,
-                _ => 100.max(self.slide[0]),
-            });
+        self.start = (4000 - self.window).min(
+            self.start
+                + match self.modifiers {
+                    ModifiersState::SHIFT => 10,
+                    _ => 100.max(self.slide[0]),
+                },
+        );
     }
-    
+
     fn prev_window(&mut self) {
         use winit::event::*;
-        self.start = self.start.saturating_sub(
-            match self.modifiers {
-                ModifiersState::SHIFT => 10,
-                _ => 100.max(self.slide[0]),
-            });
-        }
-
-        
+        self.start = self.start.saturating_sub(match self.modifiers {
+            ModifiersState::SHIFT => 10,
+            _ => 100.max(self.slide[0]),
+        });
+    }
 }
 
-
 fn play_aiff(m: &Model) {
-    use rodio::{OutputStream, Sink};
     use rodio::buffer::SamplesBuffer;
+    use rodio::{OutputStream, Sink};
 
     let max = 0.7 * m.max64[0].0(m, m.range()) as f32;
     let signal: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / max).collect();
-  
+
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
@@ -239,4 +238,3 @@ fn play_aiff(m: &Model) {
     sink.append(source);
     sink.sleep_until_end();
 }
-
