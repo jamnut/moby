@@ -7,9 +7,12 @@ edition = "2021"
 
 [dependencies]
 byteorder = "1.4.3"
+colorous = "1.0.12"
 libm = "0.2"
 num = "0.4.1"
 pixels = "0.13"
+rodio = "0.17.1"
+rustc_tools_util = "0.3.0"
 winit = "0.28"
 
 [dependencies.microfft]
