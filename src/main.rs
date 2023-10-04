@@ -22,27 +22,32 @@ use crate::signal::*;
 const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 800;
 
+const WHALE_RANGE: Range<f32> = 180.0 .. 600f32;
+const WHALE_VIEW: Range<f32> = 150.0 .. 700f32;
+
+
 /// Representation of the application state. In this example, a box will bounce around the screen.
 fn main() -> Result<(), Error> {
+    
     let event_loop = EventLoop::new();
-
+    
     let window = {
         let size = LogicalSize::new(WIDTH, HEIGHT);
         WindowBuilder::new()
-            .with_title("Finding Moby")
-            .with_inner_size(size)
-            .with_min_inner_size(size)
-            .build(&event_loop)
-            .unwrap()
+        .with_title("Finding Moby")
+        .with_inner_size(size)
+        .with_min_inner_size(size)
+        .build(&event_loop)
+        .unwrap()
     };
-
+    
     let mut pixels = {
         let window_size = window.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
-
-    let mut m = Model::new(74);
+    
+    let mut m = Model::new(32);
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_wait();
@@ -142,6 +147,7 @@ fn aiff_samples(full_name: &str) -> Result<Vec<i16>, io::Error> {
 }
 
 pub struct Model<'a> {
+    is_whale: Vec<bool>,
     aiff_number: usize,
     aiff_name: String,
     full_name: String,
@@ -151,7 +157,7 @@ pub struct Model<'a> {
     window: usize,
     slide: Vec<usize>,
     modifiers: winit::event::ModifiersState,
-    max64: Vec<(fn(&Model, Range<usize>) -> f64, &'a str)>,
+    max64: Vec<(fn(&Model, Range<usize>) -> f32, &'a str)>,
     upper: Vec<fn(draw::MyDrawingArea, &Model) -> Result<(), Box<dyn std::error::Error>>>,
 }
 
@@ -161,6 +167,7 @@ impl Model<'_> {
         let aiff_data = aiff_samples(&aiff_path).unwrap();
 
         Self {
+            is_whale: load_train_csv(),
             aiff_number,
             aiff_name,
             full_name: aiff_path,
@@ -175,7 +182,7 @@ impl Model<'_> {
                 (max_none, "nnone"),
                 (max_all, "nall"),
             ],
-            upper: vec![draw_upper_fft, draw_upper_signal],
+            upper: vec![draw_upper_tracking, draw_upper_fft, draw_upper_signal],
         }
     }
 
@@ -238,3 +245,33 @@ fn play_aiff(m: &Model) {
     sink.append(source);
     sink.sleep_until_end();
 }
+
+fn load_train_csv() -> Vec<bool>{
+    use std::io::{BufRead, BufReader};
+
+    let mut is_whale = vec![false; 30_000];
+    let file = File::open("/Users/steveweeks/dev/whales/data/train.csv").unwrap();
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().skip(1) {
+        if let Ok(line) = line {
+            let mut iter = line.split(',');
+            let file_number = match iter.next().unwrap().chars()
+                .skip_while(|c| !c.is_digit(10))
+                .take_while(|c| c.is_digit(10))
+                .collect::<String>()
+                .parse::<usize>() {
+                Ok(file_number) => file_number,
+                Err(err) => {
+                    println!("Error parsing file number {err:?}  {line}");
+                    continue;
+                }
+            };
+            if iter.next().unwrap() == "1" {
+                is_whale[file_number] = true;
+            }
+        } 
+    }
+    is_whale
+}
+
