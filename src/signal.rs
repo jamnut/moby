@@ -9,6 +9,8 @@ use num::traits::{Float, Num};
 
 use crate::{Model, WHALE_RANGE};
 
+
+
 pub fn _hann(samples: &mut [f32]) {
     let len = samples.len();
     for (i, item) in samples.iter_mut().enumerate().take(len) {
@@ -63,63 +65,31 @@ pub fn max_none(_m: &Model, _range: Range<usize>) -> f32 {
     i16::MAX as f32
 }
 
-pub fn fft(m: &Model, range: Range<usize>) -> (Vec<f32>, f32, f32, f32) {
+pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, f32) {
     
-    let dmax: f32 = m.max64[0].0(m, range.clone()) as f32;
+    let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
     let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
 
-    let fft_fn = |size: usize, range: Range<usize>| {
+    let fft_fn = || {
+        let size = m.fft_size[0];
+        let width = size.min(m.window);
         let mut samples = vec![0.0; size];
-        samples[0..200].copy_from_slice(&data[range.clone()]);
+        samples[0..width].copy_from_slice(&data[start..(start + width)]);
         let mut fft = match size {
+            2048 => microfft::real::rfft_2048(&mut samples.try_into().unwrap()).to_vec(),
             1024 => microfft::real::rfft_1024(&mut samples.try_into().unwrap()).to_vec(),
             512 => microfft::real::rfft_512(&mut samples.try_into().unwrap()).to_vec(),
             256 => microfft::real::rfft_256(&mut samples.try_into().unwrap()).to_vec(),
+            128 => microfft::real::rfft_128(&mut samples.try_into().unwrap()).to_vec(),
             _ => panic!("Unsupported FFT size: {}", size),
         };    
         fft[0].im = 0.0;
-        let x: Vec<f32> = fft.iter().map(|c| c.norm()).collect();
-        x
+        fft.iter().map(|c| c.norm()).collect::<Vec<f32>>()
     };    
 
     // hann(&mut samples);
 
-    let x = fft_fn(m.fft_size[0], range.clone());
-    
-    let fft: Vec<f32> = match m.fft_size[0] {
-        1024 => {
-            fft_fn(1024, range.clone())
-            // let mut samples: [f32; 1024] = [0.0; 1024];
-            // samples[0..200].copy_from_slice(&data[range.clone()]);
-            // let fft = microfft::real::rfft_1024(&mut samples);
-            // fft[0].im = 0.0;
-            // fft.iter().map(|c| c.norm()).collect()
-        }
-        512 => {
-            let mut samples: [f32; 512] = [0.0; 512];
-            samples[0..200].copy_from_slice(&data[range.clone()]);
-            let fft = microfft::real::rfft_512(&mut samples);
-            fft[0].im = 0.0;
-            fft.iter().map(|c| c.norm()).collect()
-        }
-        256 => {
-            let mut samples: [f32; 256] = [0.0; 256];
-            samples[0..200].copy_from_slice(&data[range.clone()]);
-            let fft = microfft::real::rfft_256(&mut samples);
-            fft[0].im = 0.0;
-            fft.iter().map(|c| c.norm()).collect()
-        }
-        128 => {
-            let end = range.end.min(range.start + 128);
-            let mut samples: [f32; 128] = [0.0; 128];
-            samples[0..128].copy_from_slice(&data[range.start..end]);
-            let fft = microfft::real::rfft_128(&mut samples);
-            fft[0].im = 0.0;
-            fft.iter().map(|c| c.norm()).collect()
-        }
-        _ => panic!("fft size not supported"),
-    };
-
+    let fft: Vec<f32> = fft_fn();
     let fft: Vec<f32> = fft.iter().map(|x| x * x).collect();
 
     let bin_size = 2000.0 / fft.len() as f32;
@@ -138,23 +108,6 @@ pub fn fft(m: &Model, range: Range<usize>) -> (Vec<f32>, f32, f32, f32) {
         },
     );
     let fpeak = (peak + whale_bins.start) as f32 * bin_size;
-
-    // Calculate signal to noise ratio
-    // let mut count: usize = 0;
-    // let (_spow, npow) = fft[whale_bins.clone()].iter().enumerate().fold(
-    //     (0.0, 0.0),
-    //     |(spow, npow), (i, f)| {
-    //         let bins = (20.0 /bin_size).ceil() as usize;
-    //         if i > peak.saturating_sub(bins) && i < peak.saturating_add(bins) {
-    //             (spow + f, npow)
-    //         } else {
-    //             count = count + 1;
-    //             (spow, npow + f)
-    //         }
-    //     },
-    // );
-    // let snr = fft[peak + whale_bins.start] / (npow / count as f32);
-    // let snr = spow / npow;
 
     // Use median to estimate the snr
     let mut snr = fft[whale_bins].to_vec();
@@ -177,9 +130,8 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<f32>, f
     let mut fsnr: Vec<f32> = Vec::new();
     let mut smax: f32 = 0.0;
 
-    for i in (0..4000 - m.window).step_by(m.slide[0]) {
-        let range = i..i + m.window;
-        let (fft, max, peak, snr) = fft(m, range);
+    for start in (0..4000 - m.window).step_by(m.slide[0]) {
+        let (fft, max, peak, snr) = fft(m, start);
 
         spec.push(fft);
         fmax.push(max);
@@ -192,25 +144,20 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<f32>, f
 }
 
 
-fn whale_bins(bin_size: f32) -> Range<usize> {
-    (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize
+fn find_peaks(fft: &[f32]) -> Vec<usize> {
+    let bin_size = 2000.0 / fft.len() as f32;
+    let whale_bins = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
+
+    let mut peaks: Vec<usize> = whale_bins.filter(|i| {
+        fft[*i] > fft[*i-1] && fft[*i] > fft[*i+1]
+    }).collect();
+    peaks.sort_by(|a, b| fft[*b].partial_cmp(&fft[*a]).unwrap());
+
+    peaks[0..peaks.len().min(3)].to_vec()
 }
 
-fn find_peaks(fft: &[f32], scale: f32) -> Vec<f32> {
-    let mut fft = fft.clone().to_vec();
-
-    fft.sort_by(|a, b| b.partial_cmp(a).unwrap());
-    fft.iter().take(10).map(|&f| f * scale).collect()
-}
-
-pub fn tracking(spec: &Vec<Vec<f32>>, fmax: &[f32]) -> Vec<Vec<f32>> {
-    let bins = whale_bins(2000.0 / spec[0].len() as f32);
-
-    spec.iter().zip(fmax).map(|(fft, max)| {
-        println!("{:?}  {:.2}", fft[0] * max, max);
-        find_peaks(&fft[bins.clone()], *max)
-    })
-    .collect()
+pub fn tracking(spec: &Vec<Vec<f32>>) -> Vec<Vec<usize>> {
+    spec.iter().map(|fft| { find_peaks(&fft) }).collect()
 }
 
 

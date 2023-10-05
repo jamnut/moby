@@ -63,16 +63,16 @@ pub fn draw_upper_signal( upper: MyDrawingArea, m: &Model, ) -> Result<(), Box<d
         .draw()?;
 
     upper_chart
-        .draw_series(LineSeries::new(signal, BLUE.stroke_width(3)))
-        .unwrap();
+        .draw_series(
+            LineSeries::new(signal, BLUE.stroke_width(3)))?;
 
-      upper.present()?;
-      Ok(())
+    upper.present()?;
+    Ok(())
 }
     
     
 pub fn draw_upper_tracking(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
-  let (spec, fmax, _fpeak, snr, _smax) = spectrogram(m);
+  let (spec, _fmax, _fpeak, snr, _smax) = spectrogram(m);
   let bin_size = 2000.0 / spec[0].len() as f32;
   // let fmax = fmax.iter().map(|f| *f / smax).collect::<Vec<f32>>();
   let snr_max: f32 = snr.iter().fold(0.0, |a, b| a.max(*b));
@@ -81,7 +81,7 @@ pub fn draw_upper_tracking(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dy
   snrm.sort_by(|a,b| a.partial_cmp(b).unwrap());
   let snrm = snrm[snrm.len() / 2];
 
-  let tracks = tracking(&spec, &fmax);
+  let tracks = tracking(&spec);
 
   let upper = upper.margin(0, 0, 0, 20);
   let upper_caption = format!(
@@ -93,13 +93,15 @@ pub fn draw_upper_tracking(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dy
       , snr_max.ceil() as usize
   );
   
+  let whale_view = (WHALE_VIEW.start / bin_size) as usize .. (WHALE_VIEW.end / bin_size + 1.0) as usize;
+
   let mut upper_chart = ChartBuilder::on(&upper)
       .x_label_area_size(35)
       .y_label_area_size(40)
       .right_y_label_area_size(40)
       .margin(5)
       .caption(upper_caption, ("sans-serif", 40))
-      .build_cartesian_2d(0..spec.len(), WHALE_VIEW)?
+      .build_cartesian_2d(0..spec.len(), whale_view)?
       .set_secondary_coord(0..spec.len(), 0.0..snr_max);
   
   upper_chart
@@ -117,26 +119,27 @@ pub fn draw_upper_tracking(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dy
       .draw()?;
 
 
-  let points: Vec<(usize, f32)> = tracks.iter().enumerate().map(|(bin, ys)| {
+  let points: Vec<(usize, usize)> = tracks.iter().enumerate().map(|(bin, ys)| {
     ys.iter().map(|y| (bin, *y) ).collect::<Vec<_>>()
   }).flatten().collect();
 
-  upper_chart.draw_series(points.iter().map(|(bin, y)|
-      Circle::new((*bin, *y), 2, BLUE.filled())
-  ))?;
+  upper_chart.draw_series(points.iter().map(|(bin, y)| {
+        Circle::new((*bin, *y), 2, BLUE.filled())
+        // Rectangle::new([(*bin,*y),(*bin+1,*y+2)], BLUE.filled())
+    }))?;
 
 
-  upper_chart
-      .draw_secondary_series(
-          LineSeries::new( (0..).zip(snr)
-          , RED.stroke_width(3)))?
-      .label("SNR")
-      .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+//   upper_chart
+//       .draw_secondary_series(
+//           LineSeries::new( (0..).zip(snr)
+//           , RED.stroke_width(3)))?
+//       .label("SNR")
+//       .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
 
-  upper_chart
-      .configure_series_labels()
-      .background_style(&WHITE)
-      .draw()?;
+//   upper_chart
+//       .configure_series_labels()
+//       .background_style(&WHITE)
+//       .draw()?;
 
   upper.present()?;
   Ok(())
@@ -144,7 +147,7 @@ pub fn draw_upper_tracking(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dy
       
       
 pub fn draw_upper_fft(upper: MyDrawingArea, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
-    let (fft, fmax, _fpeak, snr) = signal::fft(m, m.range());
+    let (fft, fmax, _fpeak, snr) = signal::fft(m, m.start);
     let bin_size = 2000.0 / fft.len() as f32;
 
     let upper = upper.margin(0, 0, 0, 20);

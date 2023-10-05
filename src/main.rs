@@ -172,7 +172,7 @@ impl Model<'_> {
             aiff_name,
             full_name: aiff_path,
             aiff_data,
-            fft_size: vec![1024, 512, 256, 128],
+            fft_size: vec![1024, 512, 256, 128, 2048],
             start: 2000,
             window: 200,
             slide: vec![10, 50, 100, 200],
