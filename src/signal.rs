@@ -4,11 +4,7 @@
 use std::f32::consts::PI;
 use std::ops::Range;
 
-use num::cast::NumCast;
-use num::traits::{Float, Num};
-
 use crate::{Model, WHALE_RANGE};
-
 
 
 pub fn _hann(samples: &mut [f32]) {
@@ -18,39 +14,6 @@ pub fn _hann(samples: &mut [f32]) {
     }
 }
 
-pub fn _median(numbers: &mut [f32]) -> f32 {
-    let length = numbers.len();
-
-    if length == 0 {
-        return 0.0;
-    }
-
-    numbers.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-
-    if length % 2 == 0 {
-        let left = numbers[length / 2];
-        let right = numbers[length / 2 + 1];
-
-        (left + right) / 2.0
-    } else {
-        numbers[length / 2]
-    }
-}
-
-fn _to_float<T, T2>(s: T) -> T2
-where
-    T: Num + NumCast + Copy,
-    T2: Float + NumCast + Copy,
-{
-    NumCast::from(s).unwrap()
-}
-
-pub fn _maximum<T>(data: &[T]) -> T
-where
-    T: Float + NumCast + Copy,
-{
-    data.iter().fold(T::neg_infinity(), |a, b| a.max(*b))
-}
 
 // TODO: This really should be abs max, not plain max
 pub fn max_window(m: &Model, range: Range<usize>) -> f32 {
@@ -144,7 +107,7 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<f32>, f
 }
 
 
-fn find_peaks(fft: &[f32]) -> Vec<usize> {
+fn find_peaks(num: usize, fft: &[f32]) -> Vec<usize> {
     let bin_size = 2000.0 / fft.len() as f32;
     let whale_bins = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
 
@@ -153,73 +116,99 @@ fn find_peaks(fft: &[f32]) -> Vec<usize> {
     }).collect();
     peaks.sort_by(|a, b| fft[*b].partial_cmp(&fft[*a]).unwrap());
 
-    peaks[0..peaks.len().min(3)].to_vec()
+    peaks[0..num.min(peaks.len())].to_vec()
 }
 
-pub fn tracking(spec: &Vec<Vec<f32>>) -> Vec<Vec<usize>> {
-    spec.iter().map(|fft| { find_peaks(&fft) }).collect()
-}
+const TRACK_MIN: usize = 10;
+const NUM_PEAKS: usize = 5;
 
+pub fn tracking(spec: &Vec<Vec<f32>>) -> Tracks {
+    let mut tracks: Tracks = Tracks::new();
 
-// coorelates two sprectrograms
-pub fn _correlate(s: &Vec<Vec<f32>>, t: &Vec<Vec<f32>>) -> Option<usize> {
-    if t.len() > s.len() || t[0].len() > s[0].len() {
-        return None;
+    for (i, fft) in spec.iter().enumerate() {
+        let unused_peaks = tracks.extend(i, find_peaks(NUM_PEAKS, &fft));
+        tracks.new_tracks(i, unused_peaks);
     }
-    let mut max_corr = 0.0;
-    let mut max_index = None;
-    for i in 0..s.len()-t.len()+1 {
-        for j in 0..s[i].len()-t[0].len()+1 {
-            let mut sum = 0.0;
-            for k in 0..t.len() {
-                for l in 0..t[k].len() {
-                    sum += s[i+k][j+l] * t[k][l];
-                }
-            }
-            if sum > max_corr {
-                max_corr = sum;
-                max_index = Some(i);
+    // filter out tracks that are too short
+    tracks.0.iter().filter(|t| t.len() > TRACK_MIN).cloned().collect::<Tracks>()
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Track(Vec<(usize, usize)>);
+
+impl Track {
+    fn new(bin: usize, peak: usize) -> Track {
+        Track(vec![(bin, peak)])
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn extend(&mut self, bin: usize, peak: usize) -> bool {
+        // if the peak is close to the last peak in the track, extend the track
+        if let Some((last_bin, last_peak)) = self.0.last() {
+            if bin - *last_bin < 2 && peak >= *last_peak && peak < *last_peak + 2 {
+                self.0.push((bin, peak));
+                return true
             }
         }
+        false
     }
-    max_index
 }
 
 
-// Apply the Sobel operator to detect edges in the spectrogram
-pub fn _sobel_operator(image: &Vec<Vec<f32>>) -> Vec<Vec<f32>> {
-    // Convert the spectrogram to a grayscale image
-    let mut output_image = image.clone();
-    for y in output_image.iter_mut() {
-        for x in y.iter_mut() {
-            *x = 0.0;
-        }
-    }
-    // Apply the Sobel operator to detect edges in the grayscale image
-    let kernel_x = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
-    let kernel_y = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
+//-------------- #[derive(New)]
+#[derive(Debug, Default)]
+pub struct Tracks(Vec<Track>);
 
-    for x in 1..image.len()-1 {
-        for y in 1..image[0].len()-1 {
-            let mut gx = 0.0;
-            let mut gy = 0.0;
-            for i in 0..3 {
-                for j in 0..3 {
-                    let pixel = image[x+i-1][y+j-1];
-                    gx += pixel * kernel_x[i][j] as f32;
-                    gy += pixel * kernel_y[i][j] as f32;
-                }
+impl Tracks {
+    fn new() -> Tracks {
+        Tracks(Vec::new())
+    }
+
+    fn add(&mut self, track: Track) {
+        self.0.push(track);
+    }
+
+    pub fn _len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn _iter(&self) -> std::slice::Iter<Track> {
+        self.0.iter()
+    }
+    
+    fn new_tracks(&mut self, bin: usize, peaks: Vec<usize>) {
+        peaks.iter().for_each(|p| {
+            self.add(Track::new(bin, *p));
+        });
+    }
+
+    fn extend(&mut self, bin: usize, peaks: Vec<usize>) -> Vec<usize> {
+        let mut unused_peaks = Vec::new();
+        for peak in peaks {
+            if !self.0.iter_mut().any(|t| t.extend(bin, peak)) {
+                unused_peaks.push(peak);
             }
-            output_image[x][y] = ((gx.powf(2.) + gy.powf(2.)) as f32).sqrt();
         }
+        unused_peaks
     }
 
-    output_image
+    pub fn as_points(&self) -> Vec<(usize, usize)> {
+        self.0.iter().flat_map(|t| t.0.iter().copied()).collect()
+    }
+
 }
 
+use std::iter::FromIterator;
 
-pub fn _normalize(data: &[f32]) -> Vec<f32> {
-    let max = data.iter().fold(0.0, |a, b| a.max(*b));
-    data.iter().map(|x| x / max).collect()
+impl FromIterator<Track> for Tracks {
+    fn from_iter<I: IntoIterator<Item=Track>>(iter: I) -> Self {
+        let mut tracks = Tracks::new();
+        for track in iter {
+            tracks.0.push(track);
+        }
+        tracks
+    }
 }
-

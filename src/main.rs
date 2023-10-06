@@ -12,6 +12,7 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use draw::draw_upper_signal;
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
+// use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
@@ -19,11 +20,11 @@ use winit::window::WindowBuilder;
 use crate::draw::*;
 use crate::signal::*;
 
-const WIDTH: u32 = 1200;
-const HEIGHT: u32 = 800;
+// const WIDTH: u32 = 1200;
+// const HEIGHT: u32 = 800;
 
 const WHALE_RANGE: Range<f32> = 180.0 .. 600f32;
-const WHALE_VIEW: Range<f32> = 150.0 .. 700f32;
+const WHALE_VIEW: Range<f32> = 150.0 .. 800f32;
 
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
@@ -32,22 +33,32 @@ fn main() -> Result<(), Error> {
     let event_loop = EventLoop::new();
     
     let window = {
-        let size = LogicalSize::new(WIDTH, HEIGHT);
+        // let size = LogicalSize::new(WIDTH, HEIGHT);
         WindowBuilder::new()
+        .with_maximized(true)
         .with_title("Finding Moby")
-        .with_inner_size(size)
-        .with_min_inner_size(size)
+        // .with_inner_size(size)
+        // .with_min_inner_size(size)
         .build(&event_loop)
         .unwrap()
     };
     
+    let psize= window.inner_size();
+    let lsize: LogicalSize<u32> = psize.to_logical(window.scale_factor());
+    let (width, height) = (lsize.width, lsize.height);
+    println!("Physical size: {:?}", psize);
+    println!("Logical size: {:?}", lsize);
+    println!("Scale factor: {}", window.scale_factor());
+    println!("Width: {}  Height: {}", width, height);
+
     let mut pixels = {
-        let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(WIDTH, HEIGHT, surface_texture)?
+        // let window_size = window.inner_size();
+        // let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        let surface_texture = SurfaceTexture::new(psize.width, psize.height, &window);
+        Pixels::new(lsize.width, lsize.height, surface_texture)?
     };
     
-    let mut m = Model::new(32);
+    let mut m = Model::new(5);
 
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_wait();
@@ -64,7 +75,7 @@ fn main() -> Result<(), Error> {
             }
 
             Event::RedrawRequested(_) => {
-                draw::draw(pixels.frame_mut(), &m).unwrap();
+                draw::draw((width, height), pixels.frame_mut(), &m).unwrap();
                 if let Err(err) = pixels.render() {
                     println!("Error: {err:?}");
                     control_flow.set_exit();
@@ -108,6 +119,7 @@ fn main() -> Result<(), Error> {
                     Q => control_flow.set_exit(),
                     S => m.slide.rotate_left(1),
                     U => m.upper.rotate_left(1),
+                    W => m.aiff_type.rotate_left(1),
                     _ => println!("Key pressed {key:?}"),
                 }
                 window.request_redraw();
@@ -146,8 +158,15 @@ fn aiff_samples(full_name: &str) -> Result<Vec<i16>, io::Error> {
     Ok(samples)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum AiffType {
+    All,
+    Whales,
+}
+
 pub struct Model<'a> {
     is_whale: Vec<bool>,
+    aiff_type: Vec<AiffType>,
     aiff_number: usize,
     aiff_name: String,
     full_name: String,
@@ -158,7 +177,7 @@ pub struct Model<'a> {
     slide: Vec<usize>,
     modifiers: winit::event::ModifiersState,
     max64: Vec<(fn(&Model, Range<usize>) -> f32, &'a str)>,
-    upper: Vec<fn(draw::MyDrawingArea, &Model) -> Result<(), Box<dyn std::error::Error>>>,
+    upper: Vec<fn(draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Error>>>,
 }
 
 impl Model<'_> {
@@ -168,6 +187,7 @@ impl Model<'_> {
 
         Self {
             is_whale: load_train_csv(),
+            aiff_type: vec![AiffType::All, AiffType::Whales],
             aiff_number,
             aiff_name,
             full_name: aiff_path,
@@ -200,11 +220,35 @@ impl Model<'_> {
     }
 
     fn next_file(&mut self) {
-        self.set_aiff(self.aiff_number + 1);
+        match self.aiff_type[0] {
+            AiffType::All => {
+                self.set_aiff(self.aiff_number + 1)
+            },
+            AiffType::Whales => {
+                for i in (self.aiff_number + 1)..30_000 {
+                    if self.is_whale[i] {
+                        self.set_aiff(i);
+                        break;
+                    }
+                }
+            },
+        };
     }
 
     fn prev_file(&mut self) {
-        self.set_aiff(self.aiff_number - 1);
+        match self.aiff_type[0] {
+            AiffType::All => {
+                self.set_aiff(self.aiff_number - 1)
+            },
+            AiffType::Whales => {
+                for i in (2..self.aiff_number).rev() {
+                    if self.is_whale[i] {
+                        self.set_aiff(i);
+                        break;
+                    }
+                }
+            },
+        };
     }
 
     fn range(&self) -> std::ops::Range<usize> {
