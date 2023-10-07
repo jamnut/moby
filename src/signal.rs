@@ -118,15 +118,15 @@ fn find_peaks(num: usize, fft: &[f32]) -> Vec<usize> {
     peaks[0..num.min(peaks.len())].to_vec()
 }
 
-const TRACK_MIN: usize = 10;
+const TRACK_MIN: usize = 5;
 const NUM_PEAKS: usize = 5;
 
 pub fn tracking(spec: &Vec<Vec<f32>>) -> Tracks {
     let mut tracks: Tracks = Tracks::new();
 
-    for (i, fft) in spec.iter().enumerate() {
-        let unused_peaks = tracks.extend(i, find_peaks(NUM_PEAKS, &fft));
-        tracks.new_tracks(i, unused_peaks);
+    for (t, fft) in spec.iter().enumerate() {
+        let unused_peaks = tracks.extend(t, find_peaks(NUM_PEAKS, &fft));
+        tracks.new_tracks(t, unused_peaks);
     }
     // filter out tracks that are too short
     tracks.0.iter().filter(|t| t.len() > TRACK_MIN).cloned().collect::<Tracks>()
@@ -136,19 +136,23 @@ pub fn tracking(spec: &Vec<Vec<f32>>) -> Tracks {
 pub struct Track(Vec<(usize, usize)>);
 
 impl Track {
-    fn new(bin: usize, peak: usize) -> Track {
-        Track(vec![(bin, peak)])
+    fn new(time: usize, bin: usize) -> Track {
+        Track(vec![(time, bin)])
     }
 
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    fn extend(&mut self, bin: usize, peak: usize) -> bool {
+    pub fn iter(&self) -> std::slice::Iter<(usize, usize)> {
+        self.0.iter()
+    }
+
+    fn extend(&mut self, time: usize, bin: usize) -> bool {
         // if the peak is close to the last peak in the track, extend the track
-        if let Some((last_bin, last_peak)) = self.0.last() {
-            if bin - *last_bin < 2 && peak >= *last_peak && peak < *last_peak + 2 {
-                self.0.push((bin, peak));
+        if let Some((last_time, last_bin)) = self.0.last() {
+            if time - *last_time < 2 && bin >= *last_bin && bin < *last_bin + 2 {
+                self.0.push((time, bin));
                 return true
             }
         }
@@ -174,27 +178,31 @@ impl Tracks {
         self.0.len()
     }
 
-    pub fn _iter(&self) -> std::slice::Iter<Track> {
+    pub fn iter(&self) -> std::slice::Iter<Track> {
         self.0.iter()
     }
     
-    fn new_tracks(&mut self, bin: usize, peaks: Vec<usize>) {
-        peaks.iter().for_each(|p| {
-            self.add(Track::new(bin, *p));
+    pub fn max_len(&self) -> usize {
+        self.0.iter().map(|t| t.len()).max().unwrap_or(0)
+    }
+
+    fn new_tracks(&mut self, time: usize, bins: Vec<usize>) {
+        bins.iter().for_each(|bin| {
+            self.add(Track::new(time, *bin));
         });
     }
 
-    fn extend(&mut self, bin: usize, peaks: Vec<usize>) -> Vec<usize> {
-        let mut unused_peaks = Vec::new();
-        for peak in peaks {
-            if !self.0.iter_mut().any(|t| t.extend(bin, peak)) {
-                unused_peaks.push(peak);
+    fn extend(&mut self, time: usize, bins: Vec<usize>) -> Vec<usize> {
+        let mut unused_bins = Vec::new();
+        for bin in bins {
+            if !self.0.iter_mut().any(|t| t.extend(time, bin)) {
+                unused_bins.push(bin);
             }
         }
-        unused_peaks
+        unused_bins
     }
 
-    pub fn as_points(&self) -> Vec<(usize, usize)> {
+    pub fn _as_points(&self) -> Vec<(usize, usize)> {
         self.0.iter().flat_map(|t| t.0.iter().copied()).collect()
     }
 

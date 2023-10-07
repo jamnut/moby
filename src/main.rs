@@ -12,7 +12,8 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use draw::draw_signal;
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event::*;
+// use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
@@ -106,6 +107,21 @@ fn main() -> Result<(), Error> {
                     S => m.slide.rotate_left(1),
                     U => m.upper.rotate_left(1),
                     W => m.aiff_type.rotate_left(1),
+                    Key1 => m.digits(key),
+                    Key2 => m.digits(key),
+                    Key3 => m.digits(key),
+                    Key4 => m.digits(key),
+                    Key5 => m.digits(key),
+                    Key6 => m.digits(key),
+                    Key7 => m.digits(key),
+                    Key8 => m.digits(key),
+                    Key9 => m.digits(key),
+                    Key0 => m.digits(key),
+                    Escape => m.digits = String::new(),
+                    Return => {
+                        m.set_aiff(m.digits.parse().unwrap_or(1));
+                        m.digits = String::new();
+                    },
                     _ => println!("Key pressed {key:?}"),
                 }
                 window.request_redraw();
@@ -154,6 +170,7 @@ type DrawingFn = fn(&draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Er
 
 pub struct Model<'a> {
     is_whale: Vec<bool>,
+    digits: String,
     aiff_type: Vec<AiffType>,
     aiff_number: usize,
     aiff_name: String,
@@ -175,15 +192,16 @@ impl Model<'_> {
 
         Self {
             is_whale: load_train_csv(),
+            digits: String::new(),
             aiff_type: vec![AiffType::Whales, AiffType::All],
             aiff_number,
             aiff_name,
             full_name: aiff_path,
             aiff_data,
-            fft_size: vec![1024, 512, 256, 128, 2048],
+            fft_size: vec![512, 256, 128, 2048, 1024],
             start: 2000,
             window: 200,
-            slide: vec![10, 50, 100, 200],
+            slide: vec![20, 40, 80, 140, 200],
             modifiers: winit::event::ModifiersState::default(),
             max64: vec![
                 (max_window, "nwindow"),
@@ -260,6 +278,40 @@ impl Model<'_> {
             ModifiersState::SHIFT => self.slide[0].max(10),
             _ => 100.max(self.slide[0]),
         });
+    }
+
+    fn digits(&mut self, keycode: VirtualKeyCode) {
+        if self.modifiers == ModifiersState::empty() {
+            if let Some(ch) = keycode_to_char(keycode) {
+                self.digits.push(ch);
+            }
+        } else if self.modifiers == ModifiersState::SHIFT {
+            use VirtualKeyCode::*;
+            match keycode {
+                Key1 => self.set_aiff(55),
+                Key2 => self.set_aiff(673),
+                Key3 => self.set_aiff(19536),
+                _ => (),
+            }
+        }
+    }
+
+}
+
+fn keycode_to_char(keycode: VirtualKeyCode) -> Option<char> {
+    use VirtualKeyCode::*;
+    match keycode {
+        Key0 => Some('0'),
+        Key1 => Some('1'),
+        Key2 => Some('2'),
+        Key3 => Some('3'),
+        Key4 => Some('4'),
+        Key5 => Some('5'),
+        Key6 => Some('6'),
+        Key7 => Some('7'),
+        Key8 => Some('8'),
+        Key9 => Some('9'),
+        _ => None,
     }
 }
 

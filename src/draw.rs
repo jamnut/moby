@@ -20,18 +20,26 @@ pub fn draw((width, height): (u32, u32), frame: &mut [u8], m: &Model) -> Result<
     root.fill(&WHITE)?;
 
     let areas = root.split_by_breakpoints([width*3/4], [height/4]);
-    let [ref tl, ref _tr, ref bl, ref br] 
+    let [ref tl, ref tr, ref bl, ref br] 
         = areas[0..4] else {panic!("Not enough areas")};
         
     m.upper[0](tl, m)?;
     draw_spec(bl, m)?;
     draw_fft(br, m)?;
+    draw_info(tr, m)?;
 
     let text = format!("{:?}", m.aiff_type[0]);
     let text_style = TextStyle::from(("serif", 30).into_font()).color(&BLACK);
     root.draw_text(&text, &text_style , (5,5))?;
 
     root.present()?;
+    Ok(())
+}
+
+fn draw_info(area: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
+    let text = format!("{}", m.digits);
+    let text_style = TextStyle::from(("serif", 30).into_font()).color(&BLACK);
+    area.draw_text(&text, &text_style , (5,5))?;
     Ok(())
 }
 
@@ -90,14 +98,14 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
     );
 
     // let whale_view = (WHALE_VIEW.start / bin_size) as usize .. (WHALE_VIEW.end / bin_size + 1.0) as usize;
-    let whale_range = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
+    // let whale_range = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
 
     let chart = ChartBuilder::on(&drawing)
         .x_label_area_size(35)
         .y_label_area_size(40)
         .margin(5)
         .caption(caption, ("sans-serif", 30))
-        .build_cartesian_2d(0..spec.len(), whale_range)?;
+        .build_cartesian_2d(0..spec.len(), WHALE_RANGE)?;
     
     let mut chart 
         = chart.set_secondary_coord(0..spec.len(), 0.0..0.5f32);
@@ -120,17 +128,27 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
     ))?;
 
 
-    let points: Vec<(usize, usize)> = tracks.as_points();
+    // let gradient = colorous::GREEN_BLUE;
 
-    chart.draw_series(points.iter().map(|(bin, y)| {
-        // Circle::new((*bin, *y), 2, BLUE.filled())
-        let height = match m.fft_size[0] {
-            2048 => 4,
-            1024 => 2,
-            _ => 1,
-        };
-        Rectangle::new([(*bin,*y),(*bin+1,*y+height)], BLUE.filled())
-    }))?;
+    let max_len = tracks.max_len();
+    let height = match m.fft_size[0] {
+        2048 => 4,
+        1024 => 2,
+        _ => 1,
+    };
+
+    chart.draw_series(
+        tracks.iter().flat_map(|track| {
+            // let color = gradient.eval_continuous(track.len() as f64 / max_len as f64);
+            // let style = RGBColor(color.r, color.g, color.b).filled();
+            let style = BLUE.mix(track.len() as f64 / max_len as f64).filled();
+            track.iter().map(move |(time, bin)| {
+                let y0 = *bin as f32 * bin_size;
+                let y1 = (*bin + height) as f32 * bin_size;
+                Rectangle::new([(*time, y0), (*time + 1, y1)], style)
+            })
+        })
+    )?;
 
   drawing.present()?;
   Ok(())
@@ -184,8 +202,8 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
 
     let drawing = drawing.margin(0, 0, 0, 20);
     let caption = format!(
-        "FFT {}  Bin {:.2}Hz  Window {}  Slide {}",
-        m.fft_size[0], bin_size, m.window, m.slide[0],
+        "FFT {}  Bin {:.2}Hz  Window {}  Slide {} ({}ms)",
+        m.fft_size[0], bin_size, m.window, m.slide[0], m.slide[0] as f32 / 2 as f32
     );
 
     let mut chart = ChartBuilder::on(&drawing)
