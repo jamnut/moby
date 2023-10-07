@@ -9,10 +9,9 @@ use std::fs::File;
 use std::io::{self, Read};
 
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
-use draw::draw_upper_signal;
+use draw::draw_signal;
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
-// use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
@@ -20,11 +19,8 @@ use winit::window::WindowBuilder;
 use crate::draw::*;
 use crate::signal::*;
 
-// const WIDTH: u32 = 1200;
-// const HEIGHT: u32 = 800;
-
-const WHALE_RANGE: Range<f32> = 180.0 .. 600f32;
-const WHALE_VIEW: Range<f32> = 150.0 .. 800f32;
+const WHALE_RANGE: Range<f32> = 175.0 .. 600f32;
+const WHALE_VIEW: Range<f32> = 100.0 .. 700f32;
 
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
@@ -33,27 +29,17 @@ fn main() -> Result<(), Error> {
     let event_loop = EventLoop::new();
     
     let window = {
-        // let size = LogicalSize::new(WIDTH, HEIGHT);
         WindowBuilder::new()
         .with_maximized(true)
         .with_title("Finding Moby")
-        // .with_inner_size(size)
-        // .with_min_inner_size(size)
         .build(&event_loop)
         .unwrap()
     };
     
     let psize= window.inner_size();
     let lsize: LogicalSize<u32> = psize.to_logical(window.scale_factor());
-    let (width, height) = (lsize.width, lsize.height);
-    println!("Physical size: {:?}", psize);
-    println!("Logical size: {:?}", lsize);
-    println!("Scale factor: {}", window.scale_factor());
-    println!("Width: {}  Height: {}", width, height);
 
     let mut pixels = {
-        // let window_size = window.inner_size();
-        // let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
         let surface_texture = SurfaceTexture::new(psize.width, psize.height, &window);
         Pixels::new(lsize.width, lsize.height, surface_texture)?
     };
@@ -75,7 +61,7 @@ fn main() -> Result<(), Error> {
             }
 
             Event::RedrawRequested(_) => {
-                draw::draw((width, height), pixels.frame_mut(), &m).unwrap();
+                draw::draw((lsize.width, lsize.height), pixels.frame_mut(), &m).unwrap();
                 if let Err(err) = pixels.render() {
                     println!("Error: {err:?}");
                     control_flow.set_exit();
@@ -164,6 +150,8 @@ enum AiffType {
     Whales,
 }
 
+type DrawingFn = fn(&draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Error>>;
+
 pub struct Model<'a> {
     is_whale: Vec<bool>,
     aiff_type: Vec<AiffType>,
@@ -177,7 +165,7 @@ pub struct Model<'a> {
     slide: Vec<usize>,
     modifiers: winit::event::ModifiersState,
     max64: Vec<(fn(&Model, Range<usize>) -> f32, &'a str)>,
-    upper: Vec<fn(draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Error>>>,
+    upper: Vec<DrawingFn>,
 }
 
 impl Model<'_> {
@@ -187,7 +175,7 @@ impl Model<'_> {
 
         Self {
             is_whale: load_train_csv(),
-            aiff_type: vec![AiffType::All, AiffType::Whales],
+            aiff_type: vec![AiffType::Whales, AiffType::All],
             aiff_number,
             aiff_name,
             full_name: aiff_path,
@@ -202,7 +190,7 @@ impl Model<'_> {
                 (max_none, "nnone"),
                 (max_all, "nall"),
             ],
-            upper: vec![draw_upper_tracking, draw_upper_fft, draw_upper_signal],
+            upper: vec![draw_tracking, draw_signal],
         }
     }
 
@@ -260,7 +248,7 @@ impl Model<'_> {
         self.start = (4000 - self.window).min(
             self.start
                 + match self.modifiers {
-                    ModifiersState::SHIFT => 10,
+                    ModifiersState::SHIFT => self.slide[0].max(10),
                     _ => 100.max(self.slide[0]),
                 },
         );
@@ -269,7 +257,7 @@ impl Model<'_> {
     fn prev_window(&mut self) {
         use winit::event::*;
         self.start = self.start.saturating_sub(match self.modifiers {
-            ModifiersState::SHIFT => 10,
+            ModifiersState::SHIFT => self.slide[0].max(10),
             _ => 100.max(self.slide[0]),
         });
     }

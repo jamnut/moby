@@ -28,7 +28,7 @@ pub fn max_none(_m: &Model, _range: Range<usize>) -> f32 {
     i16::MAX as f32
 }
 
-pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, f32) {
+pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
     
     let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
     let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
@@ -74,23 +74,22 @@ pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, f32) {
 
     // Use median to estimate the snr
     let mut snr = fft[whale_bins].to_vec();
-    snr.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let spower = snr.last().unwrap();
-    let npower = snr[snr.len() / 2];
-    let snr = spower / npower;
+    snr.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    let signal = snr[0];
+    let noise = snr[snr.len() / 2];
 
     // Normalize the fft
     let fft: Vec<f32> = fft.iter().map(|x| *x / fmax).collect();
 
-    (fft, fmax, fpeak, snr)
+    (fft, fmax, fpeak, (signal, noise))
 }
 
 
-pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<f32>, f32) {
+pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f32)>, f32) {
     let mut spec: Vec<Vec<f32>> = Vec::new();
     let mut fmax: Vec<f32> = Vec::new();
     let mut fpeak: Vec<f32> = Vec::new();
-    let mut fsnr: Vec<f32> = Vec::new();
+    let mut fsnr: Vec<(f32, f32)> = Vec::new();
     let mut smax: f32 = 0.0;
 
     for start in (0..4000 - m.window).step_by(m.slide[0]) {
@@ -100,7 +99,7 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<f32>, f
         fmax.push(max);
         fpeak.push(peak);
         fsnr.push(snr);
-        smax = smax.max(max);
+        smax = smax.max(snr.0 / snr.1);
     }
 
     (spec, fmax, fpeak, fsnr, smax)
