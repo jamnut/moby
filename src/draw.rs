@@ -105,10 +105,10 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
         .y_label_area_size(40)
         .margin(5)
         .caption(caption, ("sans-serif", 30))
-        .build_cartesian_2d(0..spec.len(), WHALE_RANGE)?;
+        .build_cartesian_2d(0..4000usize, WHALE_RANGE)?;
     
     let mut chart 
-        = chart.set_secondary_coord(0..spec.len(), 0.0..0.5f32);
+        = chart.set_secondary_coord(0..4000usize, 0.0..0.5f32);
 
     chart
         .configure_mesh()
@@ -122,13 +122,11 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
 
     chart.draw_secondary_series(
         AreaSeries::new(
-            snr.iter().enumerate().map(|(i, (s, n))| (i, n / s)),
+            snr.iter().enumerate().map(|(i, (s, n))| (i * m.slide[0], n / s)),
             0.0,
             RED.mix(0.1).filled(),
     ))?;
 
-
-    // let gradient = colorous::GREEN_BLUE;
 
     let max_len = tracks.max_len();
     let height = match m.fft_size[0] {
@@ -139,13 +137,13 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
 
     chart.draw_series(
         tracks.iter().flat_map(|track| {
-            // let color = gradient.eval_continuous(track.len() as f64 / max_len as f64);
-            // let style = RGBColor(color.r, color.g, color.b).filled();
             let style = BLUE.mix(track.len() as f64 / max_len as f64).filled();
-            track.iter().map(move |(time, bin)| {
+            track.iter().map(move |(window, bin)| {
+                let x0 = window * m.slide[0];
+                let x1 = x0 + m.slide[0];
                 let y0 = *bin as f32 * bin_size;
                 let y1 = (*bin + height) as f32 * bin_size;
-                Rectangle::new([(*time, y0), (*time + 1, y1)], style)
+                Rectangle::new([(x0, y0), (x1, y1)], style)
             })
         })
     )?;
@@ -179,14 +177,16 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
     let gradient = colorous::VIRIDIS;
 
     chart
-    .draw_series(fft.iter().enumerate().map(|(bin, mag)| {
-        let y0 = bin as f32 * bin_size;
-        let y1 = y0 + bin_size;
-        let color = gradient.eval_continuous(*mag as f64);
-        let style = RGBColor(color.r, color.g, color.b).filled();
-        Rectangle::new([(0.0, y0), (*mag as f32, y1)], style)
-    }))?;
-    
+        .draw_series(fft.iter().enumerate()
+        .filter(|(bin, _mag)| *bin as f32 * bin_size >= WHALE_RANGE.start && *bin as f32 * bin_size <= WHALE_RANGE.end)
+        .map(|(bin, mag)| {
+            let y0 = bin as f32 * bin_size;
+            let y1 = y0 + bin_size;
+            let color = gradient.eval_continuous(*mag as f64);
+            let style = RGBColor(color.r, color.g, color.b).filled();
+            Rectangle::new([(0.0, y0), (*mag as f32, y1)], style)
+        }))?;
+
     chart.plotting_area().draw(&Rectangle::new(
         [(0.0, 0.0), (snr.1/snr.0, WHALE_VIEW.end)],
         RED.mix(0.1).filled(),
@@ -207,10 +207,11 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
     );
 
     let mut chart = ChartBuilder::on(&drawing)
-        .caption(caption, ("sans-serif", 30))
+        .caption(caption, ("sans-serif", 20))
         .set_label_area_size(LabelAreaPosition::Left, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d((0..spec.len()).into_segmented(), crate::WHALE_VIEW)
+        // .build_cartesian_2d((0..spec.len()).into_segmented(), crate::WHALE_VIEW)
+        .build_cartesian_2d(0..4000usize, crate::WHALE_VIEW)
         .unwrap();
 
     let gradient = colorous::VIRIDIS;
@@ -219,25 +220,25 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
         .configure_mesh()
         .x_labels(5)
         .y_labels(5)
-        .x_desc("Sample/Slide")
-        .y_desc("HZ")
+        .x_desc("Sample")
+        // .y_desc("HZ")
         .axis_desc_style(("sans-serif", 20))
         .draw()?;
 
     for (i, mags) in spec.iter().enumerate() {
         chart
-            .draw_series(mags.iter().enumerate().map(| (bin, y)| {
-                let x0 = SegmentValue::Exact(i);
-                let x1 = SegmentValue::Exact(i + 1);
-                let flo = bin as f32 * bin_size;
-                let fhi = flo + bin_size;
-                let mut color = gradient.eval_continuous(*y as f64);
-                if (i * m.slide[0] .. (i + 1) * m.slide[0]).contains(&m.range().start) 
-                && flo < crate::WHALE_RANGE.start {
+            .draw_series(mags.iter().enumerate().map(| (bin, mag)| {
+                let x0 = i * m.slide[0];
+                let x1 = (i + 1) * m.slide[0];
+                let y0 = bin as f32 * bin_size;
+                let y1 = y0 + bin_size;
+                let mut color = gradient.eval_continuous(*mag as f64);
+                // Make bottom "cursor" white
+                if x0 == m.range().start && (y0 < WHALE_RANGE.start || y1 > WHALE_RANGE.end) {
                     color = colorous::Color { r: 255, g: 255, b: 255, };
                 }
                 let style = RGBColor(color.r, color.g, color.b).filled();
-                Rectangle::new([(x0, flo), (x1, fhi)], style)
+                Rectangle::new([(x0, y0), (x1, y1)], style)
             }))
             .unwrap();
     }

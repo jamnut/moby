@@ -100,23 +100,23 @@ fn main() -> Result<(), Error> {
                     Down => m.prev_file(),
                     Left => m.prev_window(),
                     Right => m.next_window(),
-                    F => m.fft_size.rotate_left(1),
-                    N => m.max64.rotate_left(1),
+                    F => rotate(&mut m.fft_size, m.modifiers),
+                    N => rotate(&mut m.max64, m.modifiers),
                     P => play_aiff(&m),
                     Q => control_flow.set_exit(),
-                    S => m.slide.rotate_left(1),
-                    U => m.upper.rotate_left(1),
-                    W => m.aiff_type.rotate_left(1),
-                    Key1 => m.digits(key),
-                    Key2 => m.digits(key),
-                    Key3 => m.digits(key),
-                    Key4 => m.digits(key),
-                    Key5 => m.digits(key),
-                    Key6 => m.digits(key),
-                    Key7 => m.digits(key),
-                    Key8 => m.digits(key),
-                    Key9 => m.digits(key),
-                    Key0 => m.digits(key),
+                    S => rotate(&mut m.slide, m.modifiers),
+                    U => rotate(&mut m.upper, m.modifiers),
+                    W => rotate(&mut m.aiff_type, m.modifiers),
+                    Key1 => m.digits(1),
+                    Key2 => m.digits(2),
+                    Key3 => m.digits(3),
+                    Key4 => m.digits(4),
+                    Key5 => m.digits(5),
+                    Key6 => m.digits(6),
+                    Key7 => m.digits(7),
+                    Key8 => m.digits(8),
+                    Key9 => m.digits(9),
+                    Key0 => m.digits(0),
                     Escape => m.digits = String::new(),
                     Return => {
                         m.set_aiff(m.digits.parse().unwrap_or(1));
@@ -262,35 +262,30 @@ impl Model<'_> {
     }
 
     fn next_window(&mut self) {
-        use winit::event::*;
-        self.start = (4000 - self.window).min(
-            self.start
-                + match self.modifiers {
-                    ModifiersState::SHIFT => self.slide[0].max(10),
-                    _ => 100.max(self.slide[0]),
-                },
-        );
+        let inc = match self.modifiers {
+            ModifiersState::SHIFT => self.slide[0] * 10,
+            _ => self.slide[0],
+        };
+        self.start = (self.start + inc).min(4000 - self.window - self.slide[0]);
     }
 
     fn prev_window(&mut self) {
-        use winit::event::*;
-        self.start = self.start.saturating_sub(match self.modifiers {
-            ModifiersState::SHIFT => self.slide[0].max(10),
-            _ => 100.max(self.slide[0]),
-        });
+        let inc = match self.modifiers {
+            ModifiersState::SHIFT => self.slide[0] * 10,
+            _ => self.slide[0],
+        };
+        self.start = self.start.saturating_sub(inc);
     }
 
-    fn digits(&mut self, keycode: VirtualKeyCode) {
+    fn digits(&mut self, digit: usize) {
         if self.modifiers == ModifiersState::empty() {
-            if let Some(ch) = keycode_to_char(keycode) {
-                self.digits.push(ch);
-            }
+            self.digits.push_str(&digit.to_string());
         } else if self.modifiers == ModifiersState::SHIFT {
-            use VirtualKeyCode::*;
-            match keycode {
-                Key1 => self.set_aiff(55),
-                Key2 => self.set_aiff(673),
-                Key3 => self.set_aiff(19536),
+            match digit {
+                1 => self.set_aiff(32),
+                2 => self.set_aiff(55),
+                3 => self.set_aiff(673),
+                4 => self.set_aiff(19536),
                 _ => (),
             }
         }
@@ -298,20 +293,11 @@ impl Model<'_> {
 
 }
 
-fn keycode_to_char(keycode: VirtualKeyCode) -> Option<char> {
-    use VirtualKeyCode::*;
-    match keycode {
-        Key0 => Some('0'),
-        Key1 => Some('1'),
-        Key2 => Some('2'),
-        Key3 => Some('3'),
-        Key4 => Some('4'),
-        Key5 => Some('5'),
-        Key6 => Some('6'),
-        Key7 => Some('7'),
-        Key8 => Some('8'),
-        Key9 => Some('9'),
-        _ => None,
+fn rotate<T>(vec: &mut Vec<T>, modifiers: ModifiersState) {
+    if modifiers == ModifiersState::empty() {
+        vec.rotate_left(1);
+    } else if modifiers == ModifiersState::SHIFT {
+        vec.rotate_right(1);
     }
 }
 
