@@ -150,10 +150,20 @@ impl Track {
 
     fn extend(&mut self, time: usize, bin: usize) -> bool {
         // if the peak is close to the last peak in the track, extend the track
+        // This has a subtle big, what if the last round took two peaks, we 
+        // only see the last one with this logic
         if let Some((last_time, last_bin)) = self.0.last() {
+            // If it is next to the last peak, extend the track
             if time - *last_time < 2 && bin >= *last_bin && bin < *last_bin + 2 {
                 self.0.push((time, bin));
                 return true
+            }
+            // Once the track is long enough. allow gaps in the look back
+            if self.len() > TRACK_MIN {
+                if time - *last_time < 4 && bin >= *last_bin && bin < *last_bin + 4 {
+                    self.0.push((time, bin));
+                    return true
+                }
             }
         }
         false

@@ -196,6 +196,7 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+
 fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
     let (spec, _fmax, _fpeak, _snr, _smax) = spectrogram(m);
     let bin_size = 2000.0 / spec[0].len() as f32;
@@ -226,15 +227,16 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
         .draw()?;
 
     for (i, mags) in spec.iter().enumerate() {
+        let x0 = i * m.slide[0];
+        let x1 = (i + 1) * m.slide[0];
+        let show_cursor = (m.range().start .. m.range().start + m.slide[0]).contains(&x0);
         chart
             .draw_series(mags.iter().enumerate().map(| (bin, mag)| {
-                let x0 = i * m.slide[0];
-                let x1 = (i + 1) * m.slide[0];
                 let y0 = bin as f32 * bin_size;
                 let y1 = y0 + bin_size;
                 let mut color = gradient.eval_continuous(*mag as f64);
-                // Make bottom "cursor" white
-                if x0 == m.range().start && (y0 < WHALE_RANGE.start || y1 > WHALE_RANGE.end) {
+                // Make bottom and top  "cursors" white
+                if show_cursor && (y0 < WHALE_RANGE.start || y1 > WHALE_RANGE.end) {
                     color = colorous::Color { r: 255, g: 255, b: 255, };
                 }
                 let style = RGBColor(color.r, color.g, color.b).filled();
