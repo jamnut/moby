@@ -106,33 +106,51 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f
 }
 
 
-fn find_peaks(num: usize, fft: &[f32]) -> Vec<usize> {
+fn detections(fft: &[f32]) -> Vec<usize> {
     let bin_size = 2000.0 / fft.len() as f32;
     let whale_bins = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
 
-    let mut peaks: Vec<usize> = whale_bins.filter(|i| {
-        fft[*i] > fft[*i-1] && fft[*i] > fft[*i+1]
-    }).collect();
-    peaks.sort_by(|a, b| fft[*b].partial_cmp(&fft[*a]).unwrap());
+    let mut peaks = Vec::new();
 
-    peaks[0..num.min(peaks.len())].to_vec()
+    let threshold = 0.5;
+
+    let is_col = |i| fft[i] < fft[i-1] && fft[i] < fft[i+1];
+    let is_peak = |i| fft[i] > fft[i-1] && fft[i] > fft[i+1];
+
+    let valid_col = |i, peak| { fft[i] < threshold * fft[peak] };
+    let valid_peak = |i,col| { fft[col] < threshold * fft[i] };
+    
+    let mut col = 0;
+    let mut peak = 0;
+
+    for i in 1 .. fft.len() - 1 {
+        if is_peak(i) && valid_peak(i, col) { 
+            if whale_bins.contains(&i) { peaks.push(i); }
+            peak = i; 
+        }
+        if is_col(i) && valid_col(i, peak) {
+            col = i;
+        }
+    }
+
+    peaks
 }
 
-const TRACK_MIN: usize = 5;
-const NUM_PEAKS: usize = 5;
 
 pub fn tracking(spec: &Vec<Vec<f32>>) -> Tracks {
     let mut tracks: Tracks = Tracks::new();
 
     for (t, fft) in spec.iter().enumerate() {
-        let unused_peaks = tracks.extend(t, find_peaks(NUM_PEAKS, &fft));
-        tracks.new_tracks(t, unused_peaks);
+        let detects = detections(fft);
+        let unused = tracks.associate(t, &detects);
+        tracks.prune(t);
+        tracks.new_tracks(t, &unused);
     }
-    // filter out tracks that are too short
-    tracks.0.iter().filter(|t| t.len() > TRACK_MIN).cloned().collect::<Tracks>()
+
+    tracks
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Track(Vec<(usize, usize)>);
 
 impl Track {
@@ -140,92 +158,104 @@ impl Track {
         Track(vec![(time, bin)])
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
+    pub fn age(&self, now: usize) -> usize {
+        let times: Vec<usize> = self.0.iter().map(|(t, _)| *t).collect();
+        let max = times.iter().max().unwrap();
+        now - max
+    }
+
+    pub fn height(&self) -> usize {
+        let bins: Vec<usize> = self.0.iter().map(|(_, b)| *b).collect();
+        let min = bins.iter().min().unwrap();    
+        let max = bins.iter().max().unwrap();
+        max - min
+    }
+
+    pub fn width(&self) -> usize {
+        let times: Vec<usize> = self.0.iter().map(|(t, _)| *t).collect();
+        let min = times.iter().min().unwrap();    
+        let max = times.iter().max().unwrap();
+        max - min
+    }
+
+    pub fn associated(&mut self, time: usize, bin: usize) -> bool {
+
+        let diff = 2;
+
+        if self.0.iter().any(|(t, b)| t.abs_diff(time) < diff && b.abs_diff(bin) < diff) {
+            self.0.push((time, bin));
+            return true;
+        }
+        
+        return false;
     }
 
     pub fn iter(&self) -> std::slice::Iter<(usize, usize)> {
         self.0.iter()
     }
-
-    fn extend(&mut self, time: usize, bin: usize) -> bool {
-        // if the peak is close to the last peak in the track, extend the track
-        // This has a subtle big, what if the last round took two peaks, we 
-        // only see the last one with this logic
-        if let Some((last_time, last_bin)) = self.0.last() {
-            // If it is next to the last peak, extend the track
-            if time - *last_time < 2 && bin >= *last_bin && bin < *last_bin + 2 {
-                self.0.push((time, bin));
-                return true
-            }
-            // Once the track is long enough. allow gaps in the look back
-            if self.len() > TRACK_MIN {
-                if time - *last_time < 4 && bin >= *last_bin && bin < *last_bin + 4 {
-                    self.0.push((time, bin));
-                    return true
-                }
-            }
-        }
-        false
-    }
 }
 
 
 //-------------- #[derive(New)]
-#[derive(Debug, Default)]
-pub struct Tracks(Vec<Track>);
+#[derive(Debug, Default, PartialEq)]
+pub struct Tracks {
+    pub current: Vec<Track>,
+    pub history: Vec<Track>,
+}
 
 impl Tracks {
     fn new() -> Tracks {
-        Tracks(Vec::new())
+        Tracks { current: Vec::new(), history: Vec::new() }
     }
 
-    fn add(&mut self, track: Track) {
-        self.0.push(track);
-    }
-
-    pub fn _len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<Track> {
-        self.0.iter()
+    pub fn new_tracks(&mut self, time: usize, detects: &Vec<usize>) {
+        for d in detects {
+            self.current.push(Track::new(time, *d));
+        }
     }
     
-    pub fn max_len(&self) -> usize {
-        self.0.iter().map(|t| t.len()).max().unwrap_or(0)
-    }
+    pub fn associate(&mut self, i: usize, detects: &Vec<usize>) -> Vec<usize> {
 
-    fn new_tracks(&mut self, time: usize, bins: Vec<usize>) {
-        bins.iter().for_each(|bin| {
-            self.add(Track::new(time, *bin));
-        });
-    }
+        let mut unused = Vec::new();
 
-    fn extend(&mut self, time: usize, bins: Vec<usize>) -> Vec<usize> {
-        let mut unused_bins = Vec::new();
-        for bin in bins {
-            if !self.0.iter_mut().any(|t| t.extend(time, bin)) {
-                unused_bins.push(bin);
+        for d in detects {
+            let mut taken = false;
+            for t in self.current.iter_mut() {
+                if t.associated(i, *d) {
+                    taken = true;
+                }
+            }
+            if !taken {
+                unused.push(*d);
             }
         }
-        unused_bins
+
+        unused
     }
 
-    pub fn _as_points(&self) -> Vec<(usize, usize)> {
-        self.0.iter().flat_map(|t| t.0.iter().copied()).collect()
-    }
-
-}
-
-use std::iter::FromIterator;
-
-impl FromIterator<Track> for Tracks {
-    fn from_iter<I: IntoIterator<Item=Track>>(iter: I) -> Self {
-        let mut tracks = Tracks::new();
-        for track in iter {
-            tracks.0.push(track);
+    pub fn prune(&mut self, now: usize) {
+        let mut i = 0;
+        while i < self.current.len() {
+            if self.current[i].age(now) > 5 {
+                let track = self.current.swap_remove(i);
+                self.history.push(track);
+                continue;
+            } 
+            i += 1;
         }
-        tracks
     }
+
+    pub fn tallest(&self) -> Option<&Track> {
+        self.current.iter()
+            .chain(self.history.iter())
+            .max_by_key(|t| t.height())
+    }
+
+    pub fn widest(&self) -> Option<&Track> {
+        self.current.iter()
+            .chain(self.history.iter())
+            .max_by_key(|t| t.width())
+    }
+
 }
+

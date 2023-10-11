@@ -127,22 +127,37 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
             RED.mix(0.1).filled(),
     ))?;
 
+    // let to_ms_hz = |(w, h)| (w * m.slide[0]/2, h * bin_size as usize);
 
-    let max_len = tracks.max_len();
-    let height = match m.fft_size[0] {
+    let draw_height = match m.fft_size[0] {
         2048 => 4,
         1024 => 2,
         _ => 1,
     };
 
     chart.draw_series(
-        tracks.iter().flat_map(|track| {
-            let style = BLUE.mix(track.len() as f64 / max_len as f64).filled();
-            track.iter().map(move |(window, bin)| {
-                let x0 = window * m.slide[0];
+        tracks.current.iter().chain(tracks.history.iter()).flat_map(|t| {
+            let mut mix = 0.1;
+
+            if let Some(track) = tracks.tallest() {
+                if *track == *t {
+                    mix = 1.0;
+                }
+            }
+
+            if let Some(track) = tracks.widest() {
+                if *track == *t {
+                    mix = 1.0;
+                }
+            }
+
+            let style = BLUE.mix(mix).filled();
+        
+            t.iter().map(move |(i, bin)| {
+                let x0 = i * m.slide[0];
                 let x1 = x0 + m.slide[0];
                 let y0 = *bin as f32 * bin_size;
-                let y1 = (*bin + height) as f32 * bin_size;
+                let y1 = (*bin + draw_height) as f32 * bin_size;
                 Rectangle::new([(x0, y0), (x1, y1)], style)
             })
         })
