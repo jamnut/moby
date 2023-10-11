@@ -172,14 +172,18 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
     let (fft, _fmax, _fpeak, snr) = signal::fft(m, m.start);
     let bin_size = 2000.0 / fft.len() as f32;
 
-    let caption = format!("{:?}  SNR ({:.0}/{:.0}) {:.0}", 
-        m.range(), snr.0, snr.1, snr.0 / snr.1);
+    let snr_db = f32::log10(snr.1 / snr.0) * 20.0;
+
+    let caption = format!("{:?}  SNR ({:.0}/{:.0}) {:.0}  {:.0}dB", 
+        m.range(), snr.0, snr.1, snr.0 / snr.1, snr_db);
+
+    let (x0, x1, fscale) = m.fft_scale[0];
 
     let mut chart = ChartBuilder::on(&drawing)
         .caption(caption, ("sans-serif", 20))
         .set_label_area_size(LabelAreaPosition::Right, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d(0.0..1f32, WHALE_VIEW)
+        .build_cartesian_2d(x0 .. x1, WHALE_VIEW)
         .unwrap();
 
     chart
@@ -195,15 +199,16 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
         .draw_series(fft.iter().enumerate()
         .filter(|(bin, _mag)| *bin as f32 * bin_size >= WHALE_RANGE.start && *bin as f32 * bin_size <= WHALE_RANGE.end)
         .map(|(bin, mag)| {
+            let x1 = fscale(*mag);
             let y0 = bin as f32 * bin_size;
             let y1 = y0 + bin_size;
             let color = gradient.eval_continuous(*mag as f64);
             let style = RGBColor(color.r, color.g, color.b).filled();
-            Rectangle::new([(0.0, y0), (*mag as f32, y1)], style)
+            Rectangle::new([(x0, y0), (x1, y1)], style)
         }))?;
 
     chart.plotting_area().draw(&Rectangle::new(
-        [(0.0, 0.0), (snr.1/snr.0, WHALE_VIEW.end)],
+        [(x0, 0.0), (fscale(snr.1/snr.0), WHALE_VIEW.end)],
         RED.mix(0.1).filled(),
     ))?;
 
