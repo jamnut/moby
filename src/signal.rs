@@ -7,12 +7,14 @@ use std::ops::Range;
 use crate::{Model, WHALE_RANGE};
 
 
-pub fn _hann(samples: &mut [f32]) {
+pub fn hann(samples: &mut [f32]) {
     let len = samples.len();
     for (i, item) in samples.iter_mut().enumerate().take(len) {
         *item *= 0.5 * (1.0 - (2.0 * PI * i as f32 / (len - 1) as f32).cos());
     }
 }
+
+pub fn no_windowing(_: &mut [f32]) {}
 
 
 // TODO: This really should be abs max, not plain max
@@ -38,6 +40,7 @@ pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
         let width = size.min(m.window);
         let mut samples = vec![0.0; size];
         samples[0..width].copy_from_slice(&data[start..(start + width)]);
+        m.window_fn[0](&mut samples);
         let mut fft = match size {
             2048 => microfft::real::rfft_2048(&mut samples.try_into().unwrap()).to_vec(),
             1024 => microfft::real::rfft_1024(&mut samples.try_into().unwrap()).to_vec(),
@@ -50,12 +53,11 @@ pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
         fft.iter().map(|c| c.norm()).collect::<Vec<f32>>()
     };    
 
-    // hann(&mut samples);
 
     let fft: Vec<f32> = fft_fn();
     let fft: Vec<f32> = fft.iter().map(|x| x * x).collect();
 
-    let bin_size = 2000.0 / fft.len() as f32;
+    let bin_size = 1000.0 / fft.len() as f32;
     let whale_bins
         = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
 
@@ -74,7 +76,7 @@ pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
 
     // Use median to estimate the snr
     let mut snr = fft[whale_bins].to_vec();
-    snr.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    snr.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let signal = snr[0];
     let noise = snr[snr.len() / 2];
 
@@ -107,7 +109,7 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f
 
 
 fn detections(fft: &[f32]) -> Vec<usize> {
-    let bin_size = 2000.0 / fft.len() as f32;
+    let bin_size = 1000.0 / fft.len() as f32;
     let whale_bins = (WHALE_RANGE.start / bin_size) as usize .. (WHALE_RANGE.end / bin_size) as usize;
 
     let mut peaks = Vec::new();
@@ -138,12 +140,18 @@ fn detections(fft: &[f32]) -> Vec<usize> {
 
 
 pub fn tracking(spec: &Vec<Vec<f32>>) -> Tracks {
+    let bin_size = 1000.0 / spec[0].len() as f32;
+    let max_bin = ((WHALE_RANGE.start + (WHALE_RANGE.end - WHALE_RANGE.start) / 2.0) / bin_size) as usize;
+
     let mut tracks: Tracks = Tracks::new();
 
     for (t, fft) in spec.iter().enumerate() {
         let detects = detections(fft);
         let unused = tracks.associate(t, &detects);
         tracks.prune(t);
+
+        // new tracks must start below the mid point, anything above is noise
+        let unused = unused.iter().filter(|d| **d < max_bin).cloned().collect();
         tracks.new_tracks(t, &unused);
     }
 

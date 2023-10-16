@@ -86,7 +86,7 @@ pub fn draw_signal( area: &Drawing, m: &Model, ) -> Result<(), Box<dyn std::erro
     
 pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
     let (spec, _fmax, _fpeak, snr, _smax) = spectrogram(m);
-    let bin_size = 2000.0 / spec[0].len() as f32;
+    let bin_size = 1000.0 / spec[0].len() as f32;
 
     let tracks = tracking(&spec);
 
@@ -170,7 +170,7 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
       
 pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
     let (fft, _fmax, _fpeak, snr) = signal::fft(m, m.start);
-    let bin_size = 2000.0 / fft.len() as f32;
+    let bin_size = 1000.0 / fft.len() as f32;
 
     let snr_db = f32::log10(snr.1 / snr.0) * 20.0;
 
@@ -219,7 +219,7 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
 
 fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
     let (spec, _fmax, _fpeak, _snr, _smax) = spectrogram(m);
-    let bin_size = 2000.0 / spec[0].len() as f32;
+    let bin_size = 1000.0 / spec[0].len() as f32;
 
     let drawing = drawing.margin(0, 0, 0, 20);
     let caption = format!(
@@ -231,8 +231,7 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
         .caption(caption, ("sans-serif", 20))
         .set_label_area_size(LabelAreaPosition::Left, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        // .build_cartesian_2d((0..spec.len()).into_segmented(), crate::WHALE_VIEW)
-        .build_cartesian_2d(0..4000usize, crate::WHALE_VIEW)
+        .build_cartesian_2d(0..4000usize, WHALE_VIEW)
         .unwrap();
 
     let gradient = colorous::VIRIDIS;
@@ -242,27 +241,26 @@ fn draw_spec(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Err
         .x_labels(5)
         .y_labels(5)
         .x_desc("Sample")
-        // .y_desc("HZ")
         .axis_desc_style(("sans-serif", 20))
         .draw()?;
 
-    for (i, mags) in spec.iter().enumerate() {
+    for (i, fft) in spec.iter().enumerate() {
         let x0 = i * m.slide[0];
         let x1 = (i + 1) * m.slide[0];
         let show_cursor = (m.range().start .. m.range().start + m.slide[0]).contains(&x0);
         chart
-            .draw_series(mags.iter().enumerate().map(| (bin, mag)| {
+            .draw_series(fft.iter().enumerate().map(| (bin, power)| {
                 let y0 = bin as f32 * bin_size;
                 let y1 = y0 + bin_size;
-                let mut color = gradient.eval_continuous(*mag as f64);
+                let mut color = gradient.eval_continuous(*power as f64);
                 // Make bottom and top  "cursors" white
                 if show_cursor && (y0 < WHALE_RANGE.start || y1 > WHALE_RANGE.end) {
                     color = colorous::Color { r: 255, g: 255, b: 255, };
                 }
                 let style = RGBColor(color.r, color.g, color.b).filled();
+                // println!("{} {} {} {} {}", x0, y0, x1, y1, mag);
                 Rectangle::new([(x0, y0), (x1, y1)], style)
-            }))
-            .unwrap();
+            }))?;
     }
 
     drawing.present()?;

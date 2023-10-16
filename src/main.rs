@@ -20,8 +20,8 @@ use winit::window::WindowBuilder;
 use crate::draw::*;
 use crate::signal::*;
 
-const WHALE_RANGE: Range<f32> = 175.0 .. 600f32;
-const WHALE_VIEW: Range<f32> = 100.0 .. 700f32;
+const WHALE_RANGE: Range<f32> = 75.0 .. 375f32;
+const WHALE_VIEW: Range<f32> = 50.0 .. 400f32;
 
 
 /// Representation of the application state. In this example, a box will bounce around the screen.
@@ -100,8 +100,10 @@ fn main() -> Result<(), Error> {
                     Down => m.prev_file(),
                     Left => m.prev_window(),
                     Right => m.next_window(),
+                    C => chirp(&mut m),
                     D => rotate(&mut m.fft_scale, m.modifiers),
                     F => rotate(&mut m.fft_size, m.modifiers),
+                    H => rotate(&mut m.window_fn, m.modifiers),
                     N => rotate(&mut m.max64, m.modifiers),
                     P => play_aiff(&m),
                     Q => control_flow.set_exit(),
@@ -182,6 +184,7 @@ pub struct Model<'a> {
     start: usize,
     window: usize,
     slide: Vec<usize>,
+    window_fn: Vec<fn(&mut [f32])>,
     modifiers: winit::event::ModifiersState,
     max64: Vec<(fn(&Model, Range<usize>) -> f32, &'a str)>,
     upper: Vec<DrawingFn>,
@@ -205,6 +208,7 @@ impl Model<'_> {
             start: 2000,
             window: 200,
             slide: vec![20, 40, 80, 140, 200],
+            window_fn: vec![no_windowing, hann],
             modifiers: winit::event::ModifiersState::default(),
             max64: vec![
                 (max_window, "nwindow"),
@@ -348,3 +352,34 @@ fn load_train_csv() -> Vec<bool>{
     is_whale
 }
 
+fn chirp(m: &mut Model) {
+    use std::f64::consts::PI;
+
+    const RATE: f64 = 2000.0; // samples per second
+    let f0 = 100f64; // start frequency, Hz
+    let f1 = 200f64; // end frequency, Hz
+    let flen = f1 - f0;
+    
+    let s0 = 1000; // starting sample
+    let s1 = 3000;
+    let slen = s1 - s0;
+    
+    let df = flen / slen as f64; // change in freq per sample
+
+    let mut f = f0; // frequency in Hz
+    let mut r = 2.0 * PI * f / RATE;  // radians per sample
+    let mut phase = 0.0f64; // phase in radians
+
+    for i in 0 .. m.aiff_data.len() {
+
+        let s = phase.sin();
+        m.aiff_data[i] = (s * (i16::MAX as f64)) as i16;
+        
+        if (s0 .. s1).contains(&i) {
+            f += df;
+            r = 2.0 * PI * f / RATE;
+        }
+        
+        phase += r;
+    }
+}
