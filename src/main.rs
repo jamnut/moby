@@ -165,8 +165,8 @@ fn aiff_samples(full_name: &str) -> Result<Vec<i16>, io::Error> {
 
 #[derive(Debug, Clone, Copy)]
 enum AiffType {
-    All,
-    Whales,
+    AllFiles,
+    WhalesOnly,
 }
 
 type DrawingFn = fn(&draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Error>>;
@@ -198,7 +198,7 @@ impl Model<'_> {
         Self {
             is_whale: load_train_csv(),
             digits: String::new(),
-            aiff_type: vec![AiffType::Whales, AiffType::All],
+            aiff_type: vec![AiffType::WhalesOnly, AiffType::AllFiles],
             aiff_number,
             aiff_name,
             full_name: aiff_path,
@@ -234,10 +234,10 @@ impl Model<'_> {
 
     fn next_file(&mut self) {
         match self.aiff_type[0] {
-            AiffType::All => {
+            AiffType::AllFiles => {
                 self.set_aiff(self.aiff_number + 1)
             },
-            AiffType::Whales => {
+            AiffType::WhalesOnly => {
                 for i in (self.aiff_number + 1)..30_000 {
                     if self.is_whale[i] {
                         self.set_aiff(i);
@@ -250,10 +250,10 @@ impl Model<'_> {
 
     fn prev_file(&mut self) {
         match self.aiff_type[0] {
-            AiffType::All => {
+            AiffType::AllFiles => {
                 self.set_aiff(self.aiff_number - 1)
             },
-            AiffType::Whales => {
+            AiffType::WhalesOnly => {
                 for i in (2..self.aiff_number).rev() {
                     if self.is_whale[i] {
                         self.set_aiff(i);

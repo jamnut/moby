@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+use num::Integer;
 use plotters::backend::RGBXPixel;
 use plotters::coord::Shift;
 use plotters::prelude::*;
@@ -28,18 +29,36 @@ pub fn draw((width, height): (u32, u32), frame: &mut [u8], m: &Model) -> Result<
     draw_fft(br, m)?;
     draw_info(tr, m)?;
 
-    let text = format!("{:?}", m.aiff_type[0]);
-    let text_style = TextStyle::from(("serif", 30).into_font()).color(&BLACK);
-    root.draw_text(&text, &text_style , (5,5))?;
-
     root.present()?;
     Ok(())
 }
 
 fn draw_info(area: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
-    let text = format!("{}", m.digits);
-    let text_style = TextStyle::from(("serif", 30).into_font()).color(&BLACK);
-    area.draw_text(&text, &text_style , (5,5))?;
+    let font_size = 20;
+    let text_style = TextStyle::from(("serif", font_size).into_font()).color(&BLACK);
+
+    // Area in pixels (378, 229)
+    let text = 
+        [ &format!("N: {}", if m.digits.len() == 0 { "[DIGITS]" } else { &m.digits })
+        , &format!("W: {:?}",m.aiff_type[0])
+        , "Up/Down: file"
+        , "Left/Right: slice"
+        , "F: FFT size"
+        , "D: dB scale"
+        , &format!("S: Slide ({})", m.slide[0])
+        , "H: Hann window"
+        , "N: Normalization"
+        , "U: Upper display"
+        , "P: Play audio"
+        , "Q: Quit"
+        ];
+
+    for (i, label) in text.iter().enumerate() {
+        let row = (i / 2) as i32 * font_size + 6; 
+        let col = if i.is_even() { 5 } else { 185 };
+        area.draw_text(*label, &text_style , (col, row+25))?;
+    }
+
     Ok(())
 }
 
