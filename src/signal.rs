@@ -6,6 +6,15 @@ use std::ops::Range;
 
 use crate::{Model, WHALE_RANGE};
 
+use derive_more::{Add, Display};
+
+#[derive (Add, Display, Debug, Clone, Copy, PartialEq)]
+pub struct Bin(usize);
+
+#[derive (Add, Display, Debug, Clone, Copy, PartialEq)]
+pub struct Freq(usize);
+
+
 
 pub fn hann(samples: &mut [f32]) {
     let len = samples.len();
@@ -18,7 +27,7 @@ pub fn no_windowing(_: &mut [f32]) {}
 
 
 // TODO: This really should be abs max, not plain max
-pub fn max_window(m: &Model, range: Range<usize>) -> f32 {
+pub fn _max_window(m: &Model, range: Range<usize>) -> f32 {
     *(m.aiff_data[range].iter().max().unwrap()) as f32
 }
 
@@ -30,7 +39,7 @@ pub fn max_none(_m: &Model, _range: Range<usize>) -> f32 {
     i16::MAX as f32
 }
 
-pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
+pub fn old_fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
     
     let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
     let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
@@ -87,7 +96,7 @@ pub fn fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
 }
 
 
-pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f32)>, f32) {
+pub fn old_spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f32)>, f32) {
     let mut spec: Vec<Vec<f32>> = Vec::new();
     let mut fmax: Vec<f32> = Vec::new();
     let mut fpeak: Vec<f32> = Vec::new();
@@ -95,7 +104,7 @@ pub fn spectrogram(m: &Model) -> (Vec<Vec<f32>>, Vec<f32>, Vec<f32>, Vec<(f32, f
     let mut smax: f32 = 0.0;
 
     for start in (0..4000 - m.window).step_by(m.slide[0]) {
-        let (fft, max, peak, snr) = fft(m, start);
+        let (fft, max, peak, snr) = old_fft(m, start);
 
         spec.push(fft);
         fmax.push(max);
@@ -267,3 +276,39 @@ impl Tracks {
 
 }
 
+
+pub fn fft(m: &Model, start: usize) -> Vec<f32> {
+    
+    let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
+    let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
+
+    let fft_fn = || {
+        let size = m.fft_size[0];
+        let width = size.min(m.window);
+        let mut samples = vec![0.0; size];
+        samples[0..width].copy_from_slice(&data[start..(start + width)]);
+        m.window_fn[0](&mut samples);
+        let mut fft = match size {
+            2048 => microfft::real::rfft_2048(&mut samples.try_into().unwrap()).to_vec(),
+            1024 => microfft::real::rfft_1024(&mut samples.try_into().unwrap()).to_vec(),
+            512 => microfft::real::rfft_512(&mut samples.try_into().unwrap()).to_vec(),
+            256 => microfft::real::rfft_256(&mut samples.try_into().unwrap()).to_vec(),
+            128 => microfft::real::rfft_128(&mut samples.try_into().unwrap()).to_vec(),
+            _ => panic!("Unsupported FFT size: {}", size),
+        };    
+        fft[0].im = 0.0;
+        fft.iter().map(|c| c.norm()).collect::<Vec<f32>>()
+    };    
+
+
+    fft_fn().iter().map(|x| x * x).collect()
+
+}
+
+pub fn spectrogram(m: &Model) -> Vec<Vec<f32>> {
+    (0..4000 - m.window)
+        .step_by(m.slide[0])
+        .map(|start| 
+            fft(m, start))
+        .collect()
+}

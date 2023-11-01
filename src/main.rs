@@ -96,8 +96,8 @@ fn main() -> Result<(), Error> {
             } => {
                 use VirtualKeyCode::*;
                 match key {
-                    Up => m.next_file(),
-                    Down => m.prev_file(),
+                    Up => m.up(),
+                    Down => m.down(),
                     Left => m.prev_window(),
                     Right => m.next_window(),
                     C => chirp(&mut m),
@@ -107,6 +107,7 @@ fn main() -> Result<(), Error> {
                     N => rotate(&mut m.max64, m.modifiers),
                     P => play_aiff(&m),
                     Q => control_flow.set_exit(),
+                    R => record(&mut m),
                     S => rotate(&mut m.slide, m.modifiers),
                     U => rotate(&mut m.upper, m.modifiers),
                     W => rotate(&mut m.aiff_type, m.modifiers),
@@ -181,6 +182,7 @@ pub struct Model<'a> {
     aiff_data: Vec<i16>,
     fft_size: Vec<usize>,
     fft_scale: Vec<(f32, f32, fn (f32) -> f32)>,
+    freq: usize,
     start: usize,
     window: usize,
     slide: Vec<usize>,
@@ -205,17 +207,17 @@ impl Model<'_> {
             aiff_data,
             fft_size: vec![512, 256, 128, 2048, 1024],
             fft_scale: vec![(0.0, 1.0, |x| x), (-90.0, 0.0, |x| f32::log10(x) * 20.0)],
+            freq: 250,
             start: 2000,
             window: 200,
             slide: vec![20, 40, 80, 140, 200],
             window_fn: vec![no_windowing, hann],
             modifiers: winit::event::ModifiersState::default(),
             max64: vec![
-                (max_window, "nwindow"),
-                (max_none, "nnone"),
                 (max_all, "nall"),
+                (max_none, "nnone"),
             ],
-            upper: vec![draw_tracking, draw_signal],
+            upper: vec![draw_noise, draw_tracking, draw_signal],
         }
     }
 
@@ -264,6 +266,20 @@ impl Model<'_> {
         };
     }
 
+    fn up(&mut self) {
+        match self.modifiers {
+            ModifiersState::LOGO => self.next_file(),
+            _ => self.freq = (self.freq + self.bin_size() as usize).clamp(WHALE_VIEW.start as usize, WHALE_VIEW.end as usize),
+        }
+    }
+
+    fn down(&mut self) {
+        match self.modifiers {
+            ModifiersState::LOGO => self.prev_file(),
+            _ => self.freq = (self.freq - self.bin_size() as usize).clamp(WHALE_VIEW.start as usize, WHALE_VIEW.end as usize),
+        }
+    }
+
     fn range(&self) -> std::ops::Range<usize> {
         self.start..self.start + self.window
     }
@@ -296,6 +312,14 @@ impl Model<'_> {
                 _ => (),
             }
         }
+    }
+
+    fn bin_size(&self) -> f32 {
+        2000.0 / self.fft_size[0] as f32
+    }
+
+    fn bin(&self) -> usize {
+        self.freq / self.bin_size() as usize
     }
 
 }
@@ -383,3 +407,60 @@ fn chirp(m: &mut Model) {
         phase += r;
     }
 }
+
+fn record(m: &mut Model) {
+    use std::time::Duration;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use cpal::*;
+    use cpal::traits::*;
+
+
+    let host = cpal::default_host();
+    println!("Default host: {:?}", host.id());
+
+    let device = host.default_input_device().unwrap();
+    println!("Default input device: {:?}", device.name());
+
+    let config = device.default_input_config().unwrap();
+    println!("Default input config: {:?}", config);
+
+    let config = StreamConfig {
+        channels: 1,
+        sample_rate: cpal::SampleRate(48000),
+        buffer_size: BufferSize::Default, // 512 samples
+    };
+
+    let stream_data: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+    let stream_data_clone = stream_data.clone();
+    let stream = device.build_input_stream_raw
+        ( &config
+        , SampleFormat::F32
+        , move |data, _info| {
+            if let Some(slice) = data.as_slice() {
+                let mut stream_data = stream_data_clone.lock().unwrap();
+                stream_data.extend_from_slice(slice);
+            }
+            // println!("recording {}", data.len());
+        } 
+        , |_| {}
+        , Some(Duration::new(2, 0))
+        ).unwrap();
+
+    stream.play().unwrap();
+
+    println!("Recording for ~2 seconds ...");
+    std::thread::sleep(Duration::from_secs(2));
+    stream.pause().unwrap();
+
+    let stream_data = stream_data.lock().unwrap();
+
+    println!("Recorded {} samples", stream_data.len());
+    stream_data.iter().step_by(24).enumerate().for_each(|(i, x)| {
+        if i < m.aiff_data.len() {
+            m.aiff_data[i] = (*x * (i16::MAX as f32)) as i16;
+        }
+    });
+
+}
+
