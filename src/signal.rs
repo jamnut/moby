@@ -2,7 +2,6 @@
 #![forbid(unsafe_code)]
 
 use std::f32::consts::PI;
-use std::ops::Range;
 
 use crate::{Model, WHALE_RANGE};
 
@@ -26,29 +25,13 @@ pub fn hann(samples: &mut [f32]) {
 pub fn no_windowing(_: &mut [f32]) {}
 
 
-// TODO: This really should be abs max, not plain max
-pub fn _max_window(m: &Model, range: Range<usize>) -> f32 {
-    *(m.aiff_data[range].iter().max().unwrap()) as f32
-}
-
-pub fn max_all(m: &Model, _range: Range<usize>) -> f32 {
-    *(m.aiff_data.iter().max().unwrap()) as f32
-}
-
-pub fn max_none(_m: &Model, _range: Range<usize>) -> f32 {
-    i16::MAX as f32
-}
-
 pub fn old_fft(m: &Model, start: usize) -> (Vec<f32>, f32, f32, (f32, f32)) {
     
-    let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
-    let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
-
     let fft_fn = || {
         let size = m.fft_size[0];
         let width = size.min(m.window);
         let mut samples = vec![0.0; size];
-        samples[0..width].copy_from_slice(&data[start..(start + width)]);
+        samples[0..width].copy_from_slice(&m.aiff_data[start..(start + width)]);
         m.window_fn[0](&mut samples);
         let mut fft = match size {
             2048 => microfft::real::rfft_2048(&mut samples.try_into().unwrap()).to_vec(),
@@ -279,14 +262,11 @@ impl Tracks {
 
 pub fn fft(m: &Model, start: usize) -> Vec<f32> {
     
-    let dmax: f32 = m.max64[0].0(m, m.range()) as f32;
-    let data: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / dmax).collect();
-
     let fft_fn = || {
         let size = m.fft_size[0];
         let width = size.min(m.window);
         let mut samples = vec![0.0; size];
-        samples[0..width].copy_from_slice(&data[start..(start + width)]);
+        samples[0..width].copy_from_slice(&m.aiff_data[start..(start + width)]);
         m.window_fn[0](&mut samples);
         let mut fft = match size {
             2048 => microfft::real::rfft_2048(&mut samples.try_into().unwrap()).to_vec(),
@@ -312,3 +292,14 @@ pub fn spectrogram(m: &Model) -> Vec<Vec<f32>> {
             fft(m, start))
         .collect()
 }
+
+pub fn snr(data: &[f32]) -> (f32, f32) {
+    // Use median to estimate the snr
+    let mut data = data.to_vec();
+    data.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let signal = data[0];
+    let noise = data[data.len() / 2];
+
+    (signal, noise)
+}
+

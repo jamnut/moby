@@ -7,13 +7,13 @@ mod signal;
 use core::ops::Range;
 use std::fs::File;
 use std::io::{self, Read};
+use std::vec;
 
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use draw::draw_signal;
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::dpi::LogicalSize;
 use winit::event::*;
-// use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
@@ -21,10 +21,9 @@ use crate::draw::*;
 use crate::signal::*;
 
 const WHALE_RANGE: Range<f32> = 75.0 .. 375f32;
-const WHALE_VIEW: Range<f32> = 50.0 .. 400f32;
+const WHALE_VIEW: Range<f32> = 00.0 .. 500f32;
 
 
-/// Representation of the application state. In this example, a box will bounce around the screen.
 fn main() -> Result<(), Error> {
     
     let event_loop = EventLoop::new();
@@ -104,7 +103,6 @@ fn main() -> Result<(), Error> {
                     D => rotate(&mut m.fft_scale, m.modifiers),
                     F => rotate(&mut m.fft_size, m.modifiers),
                     H => rotate(&mut m.window_fn, m.modifiers),
-                    N => rotate(&mut m.max64, m.modifiers),
                     P => play_aiff(&m),
                     Q => control_flow.set_exit(),
                     R => record(&mut m),
@@ -172,55 +170,60 @@ enum AiffType {
 
 type DrawingFn = fn(&draw::Drawing, &Model) -> Result<(), Box<dyn std::error::Error>>;
 
-pub struct Model<'a> {
+pub struct Model {
     is_whale: Vec<bool>,
     digits: String,
     aiff_type: Vec<AiffType>,
     aiff_number: usize,
     aiff_name: String,
     full_name: String,
-    aiff_data: Vec<i16>,
+    aiff_raw: Vec<i16>,
+    aiff_max: i16,
+    aiff_data: Vec<f32>,
+    spectrogram: Vec<Vec<f32>>,
+    noise: Vec<(f32, f32)>,
     fft_size: Vec<usize>,
     fft_scale: Vec<(f32, f32, fn (f32) -> f32)>,
-    freq: usize,
-    start: usize,
+    freq: f32, // horizonl cursur on spectrogram
+    start: usize,  // vertical cursor on spectrogram
     window: usize,
     slide: Vec<usize>,
     window_fn: Vec<fn(&mut [f32])>,
     modifiers: winit::event::ModifiersState,
-    max64: Vec<(fn(&Model, Range<usize>) -> f32, &'a str)>,
     upper: Vec<DrawingFn>,
 }
 
-impl Model<'_> {
+impl Model {
     fn new(aiff_number: usize) -> Self {
-        let (aiff_name, aiff_path) = aiff_name(aiff_number);
-        let aiff_data = aiff_samples(&aiff_path).unwrap();
 
-        Self {
+        let mut new = Self {
             is_whale: load_train_csv(),
             digits: String::new(),
             aiff_type: vec![AiffType::WhalesOnly, AiffType::AllFiles],
             aiff_number,
-            aiff_name,
-            full_name: aiff_path,
-            aiff_data,
-            fft_size: vec![512, 256, 128, 2048, 1024],
+            aiff_name: String::new(),
+            full_name: String::new(),
+            aiff_raw: vec![0; 0],
+            aiff_max: 0,
+            aiff_data: vec![0.0; 0],
+            spectrogram: vec![], // vec![vec![0.0; 0]; 0],
+            noise: vec![], // vec![(0.0, 0.0); 0],
+            fft_size: vec![256, 128, 2048, 1024, 512],
             fft_scale: vec![(0.0, 1.0, |x| x), (-90.0, 0.0, |x| f32::log10(x) * 20.0)],
-            freq: 250,
+            freq: 200.0,
             start: 2000,
             window: 200,
             slide: vec![20, 40, 80, 140, 200],
-            window_fn: vec![no_windowing, hann],
+            window_fn: vec![hann, no_windowing],
             modifiers: winit::event::ModifiersState::default(),
-            max64: vec![
-                (max_all, "nall"),
-                (max_none, "nnone"),
-            ],
-            upper: vec![draw_noise, draw_tracking, draw_signal],
-        }
-    }
+            upper: vec![draw_noise, draw_tracking, draw_signal, draw_raw],
+        };
 
+        new.set_aiff(aiff_number);
+        
+        new
+    }
+    
     fn set_aiff(&mut self, aiff_number: usize) {
         if aiff_number > 30_000 {
             return;
@@ -228,10 +231,27 @@ impl Model<'_> {
         if aiff_number < 1 {
             return;
         }
-
+        
         self.aiff_number = aiff_number;
         (self.aiff_name, self.full_name) = aiff_name(self.aiff_number);
-        self.aiff_data = aiff_samples(&self.full_name).unwrap();
+        self.aiff_name.push(if self.is_whale[self.aiff_number] { '*' } else { ' ' });
+        self.aiff_raw = aiff_samples(&self.full_name).unwrap();
+        self.aiff_max = self.aiff_raw.iter().max_by(|x, y| x.abs().cmp(&y.abs())).unwrap().abs();
+        self.aiff_data = self.aiff_raw.iter().map(|x| *x as f32 / self.aiff_max as f32).collect();
+
+        self.recalculate();
+    }
+
+    fn recalculate(&mut self) {
+        self.spectrogram = spectrogram(&self);
+        self.noise = vec![(0.0, 0.0); self.fft_size[0]/2];
+        for bin in 0 .. self.noise.len() {
+            let mut row: Vec<f32> = vec![0.0; self.spectrogram.len()];
+            self.spectrogram.iter()
+                .enumerate()
+                .for_each(|(i, fft)| row[i] = fft[bin]);
+            self.noise[bin] = snr(&row);
+        }
     }
 
     fn next_file(&mut self) {
@@ -269,14 +289,16 @@ impl Model<'_> {
     fn up(&mut self) {
         match self.modifiers {
             ModifiersState::LOGO => self.next_file(),
-            _ => self.freq = (self.freq + self.bin_size() as usize).clamp(WHALE_VIEW.start as usize, WHALE_VIEW.end as usize),
+            ModifiersState::SHIFT => self.freq = (self.freq + 10.*self.bin_size()).min(WHALE_VIEW.end - self.bin_size()),
+            _ => self.freq = (self.freq + self.bin_size()).min(WHALE_VIEW.end - self.bin_size()),
         }
     }
 
     fn down(&mut self) {
         match self.modifiers {
             ModifiersState::LOGO => self.prev_file(),
-            _ => self.freq = (self.freq - self.bin_size() as usize).clamp(WHALE_VIEW.start as usize, WHALE_VIEW.end as usize),
+            ModifiersState::SHIFT => self.freq = (self.freq - 10.*self.bin_size()).max(WHALE_VIEW.start),
+            _ => self.freq = (self.freq - self.bin_size()).max(WHALE_VIEW.start),
         }
     }
 
@@ -318,10 +340,6 @@ impl Model<'_> {
         2000.0 / self.fft_size[0] as f32
     }
 
-    fn bin(&self) -> usize {
-        self.freq / self.bin_size() as usize
-    }
-
 }
 
 fn rotate<T>(vec: &mut Vec<T>, modifiers: ModifiersState) {
@@ -336,13 +354,10 @@ fn play_aiff(m: &Model) {
     use rodio::buffer::SamplesBuffer;
     use rodio::{OutputStream, Sink};
 
-    let max = 0.7 * m.max64[0].0(m, m.range()) as f32;
-    let signal: Vec<f32> = m.aiff_data.iter().map(|x| *x as f32 / max).collect();
-
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    let source = SamplesBuffer::new(1, 2000, signal);
+    let source = SamplesBuffer::new(1, 2000, m.aiff_data.clone());
     sink.append(source);
     sink.sleep_until_end();
 }
@@ -388,7 +403,7 @@ fn chirp(m: &mut Model) {
     let s1 = 3000;
     let slen = s1 - s0;
     
-    let df = flen / slen as f64; // change in freq per sample
+    let mut df = flen / slen as f64; // change in freq per sample
 
     let mut f = f0; // frequency in Hz
     let mut r = 2.0 * PI * f / RATE;  // radians per sample
@@ -397,15 +412,19 @@ fn chirp(m: &mut Model) {
     for i in 0 .. m.aiff_data.len() {
 
         let s = phase.sin();
-        m.aiff_data[i] = (s * (i16::MAX as f64)) as i16;
+        m.aiff_data[i] = (s * (i16::MAX as f64)) as f32;
         
-        if (s0 .. s1).contains(&i) {
+        if (s0 .. s1).contains(&i) && f < 400.0 {
             f += df;
             r = 2.0 * PI * f / RATE;
+            df *= 1.002;
         }
         
         phase += r;
     }
+
+    m.recalculate();
+
 }
 
 fn record(m: &mut Model) {
@@ -458,9 +477,11 @@ fn record(m: &mut Model) {
     println!("Recorded {} samples", stream_data.len());
     stream_data.iter().step_by(24).enumerate().for_each(|(i, x)| {
         if i < m.aiff_data.len() {
-            m.aiff_data[i] = (*x * (i16::MAX as f32)) as i16;
+            m.aiff_data[i] = (*x * (i16::MAX as f32)) as f32;
         }
     });
+
+    m.recalculate();
 
 }
 
