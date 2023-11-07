@@ -103,6 +103,7 @@ fn main() -> Result<(), Error> {
                     D => rotate(&mut m.fft_scale, m.modifiers),
                     F => rotate(&mut m.fft_size, m.modifiers),
                     H => rotate(&mut m.window_fn, m.modifiers),
+                    N => rotate(&mut m.right, m.modifiers),
                     P => play_aiff(&m),
                     Q => control_flow.set_exit(),
                     R => record(&mut m),
@@ -126,6 +127,7 @@ fn main() -> Result<(), Error> {
                     },
                     _ => println!("Key pressed {key:?}"),
                 }
+                m.recalculate();
                 window.request_redraw();
             }
             _ => (),
@@ -191,6 +193,7 @@ pub struct Model {
     window_fn: Vec<fn(&mut [f32])>,
     modifiers: winit::event::ModifiersState,
     upper: Vec<DrawingFn>,
+    right: Vec<DrawingFn>,
 }
 
 impl Model {
@@ -209,18 +212,20 @@ impl Model {
             spectrogram: vec![], // vec![vec![0.0; 0]; 0],
             noise: vec![], // vec![(0.0, 0.0); 0],
             fft_size: vec![256, 128, 2048, 1024, 512],
-            fft_scale: vec![(0.0, 1.0, |x| x), (-90.0, 0.0, |x| f32::log10(x) * 20.0)],
+            fft_scale: vec![(0.0, 1.0, |x| x), (-90.0, 0.0, |x| signal::db(x))],
             freq: 200.0,
             start: 2000,
             window: 200,
             slide: vec![20, 40, 80, 140, 200],
             window_fn: vec![hann, no_windowing],
             modifiers: winit::event::ModifiersState::default(),
-            upper: vec![draw_noise, draw_tracking, draw_signal, draw_raw],
+            upper: vec![draw_bin, draw_tracking, draw_signal, draw_raw],
+            right: vec![draw_noise, draw_power, draw_fft],
         };
 
         new.set_aiff(aiff_number);
-        
+        new.recalculate();
+
         new
     }
     
@@ -238,8 +243,6 @@ impl Model {
         self.aiff_raw = aiff_samples(&self.full_name).unwrap();
         self.aiff_max = self.aiff_raw.iter().max_by(|x, y| x.abs().cmp(&y.abs())).unwrap().abs();
         self.aiff_data = self.aiff_raw.iter().map(|x| *x as f32 / self.aiff_max as f32).collect();
-
-        self.recalculate();
     }
 
     fn recalculate(&mut self) {
@@ -422,9 +425,6 @@ fn chirp(m: &mut Model) {
         
         phase += r;
     }
-
-    m.recalculate();
-
 }
 
 fn record(m: &mut Model) {
@@ -480,8 +480,6 @@ fn record(m: &mut Model) {
             m.aiff_data[i] = (*x * (i16::MAX as f32)) as f32;
         }
     });
-
-    m.recalculate();
 
 }
 

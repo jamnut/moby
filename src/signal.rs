@@ -293,12 +293,16 @@ pub fn spectrogram(m: &Model) -> Vec<Vec<f32>> {
         .collect()
 }
 
+pub fn db(ratio: f32) -> f32 {
+    20. * ratio.log10()
+}
+
 pub fn snr(data: &[f32]) -> (f32, f32) {
     // Use median to estimate the snr
     let mut data = data.to_vec();
     data.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let signal = data[0];
-    let noise = data[data.len() / 2];
+    let noise = data[data.len() * 20/100];
 
     (signal, noise)
 }

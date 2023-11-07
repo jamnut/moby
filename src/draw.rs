@@ -6,7 +6,7 @@ use plotters::backend::RGBXPixel;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 
-use crate::signal::{self, old_spectrogram, tracking, spectrogram};
+use crate::signal::{db, old_spectrogram, tracking, spectrogram};
 use crate::{Model, WHALE_RANGE, WHALE_VIEW};
 
 pub type Drawing<'a> = DrawingArea<BitMapBackend<'a, RGBXPixel>, Shift>;
@@ -20,13 +20,13 @@ pub fn draw((width, height): (u32, u32), frame: &mut [u8], m: &Model) -> Result<
 
     root.fill(&WHITE)?;
 
-    let areas = root.split_by_breakpoints([width*3/4], [height/4]);
+    let areas = root.split_by_breakpoints([width*4/5], [height/4]);
     let [ref tl, ref tr, ref bl, ref br] 
         = areas[0..4] else {panic!("Not enough areas")};
         
     m.upper[0](tl, m)?;
+    m.right[0](br, m)?;
     draw_spectrogram(bl, m)?;
-    draw_fft(br, m)?;
     draw_info(tr, m)?;
 
     root.present()?;
@@ -47,6 +47,7 @@ fn draw_info(area: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>
         , "D: dB scale"
         , &format!("S: Slide ({})", m.slide[0])
         , "H: Hann window"
+        , "N: Noise Panel"
         , "U: Upper display"
         , "P: Play audio"
         , "R: Record audo"
@@ -55,7 +56,7 @@ fn draw_info(area: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>
 
     for (i, label) in text.iter().enumerate() {
         let row = (i / 2) as i32 * font_size + 6; 
-        let col = if i.is_even() { 5 } else { 185 };
+        let col = if i.is_even() { 5 } else { 155 };
         area.draw_text(*label, &text_style , (col, row+25))?;
     }
 
@@ -216,13 +217,9 @@ pub fn draw_tracking(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::er
       
 pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
 
-    let fft = signal::fft(m, m.start);
-    let snr = signal::snr(&fft);
+    let column = m.start / m.slide[0];
 
-    let snr_db = f32::log10(snr.1 / snr.0) * 20.0;
-
-    let caption = format!("{:?}  SNR ({:.0}/{:.0}) {:.0}  {:.0}dB", 
-        m.range(), snr.0, snr.1, snr.0 / snr.1, snr_db);
+    let caption = format!("FFT - Samples {:?}", m.range());
 
     let (x0, x1, fscale) = m.fft_scale[0];
 
@@ -230,7 +227,7 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
         .caption(caption, ("sans-serif", 20))
         .set_label_area_size(LabelAreaPosition::Right, 40)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d(x0 .. x1, 0.0 .. 500f32)
+        .build_cartesian_2d(x0 .. x1, WHALE_VIEW)
         .unwrap();
 
     chart
@@ -240,24 +237,36 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
         .y_labels(5)
         .draw()?;
 
-    // let gradient = colorous::VIRIDIS;
+    let gradient = colorous::VIRIDIS;
 
-    // chart
-    //     .draw_series(fft.iter().enumerate()
-    //     // .filter(|(bin, _mag)| *bin as f32 * m.bin_size() >= WHALE_RANGE.start && *bin as f32 * m.bin_size() <= WHALE_RANGE.end)
-    //     .map(|(bin, mag)| {
-    //         let x1 = fscale(*mag);
-    //         let y0 = bin as f32 * m.bin_size();
-    //         let y1 = y0 + m.bin_size();
-    //         let color = gradient.eval_continuous(*mag as f64);
-    //         let style = RGBColor(color.r, color.g, color.b).filled();
-    //         Rectangle::new([(x0, y0), (x1, y1)], style)
-    //     }))?;
-
-    chart.plotting_area().draw(&Rectangle::new(
-        [(x0, 0.0), (fscale(snr.1/snr.0), WHALE_VIEW.end)],
-        RED.mix(0.1).filled(),
-    ))?;
+    chart
+        .draw_series(
+            m.spectrogram[column]
+            .iter()
+            .enumerate()
+            .map(|(bin, power)| {
+                let (max, _noise) = m.noise[bin];
+                let x = fscale(*power/max);
+                let y0 = bin as f32 * m.bin_size();
+                let y1 = y0 + m.bin_size();
+                let color = gradient.eval_continuous((*power/max) as f64);
+                let style = RGBColor(color.r, color.g, color.b).filled();
+                Rectangle::new([(x0, y0), (x, y1)], style)
+            })
+        )?;
+           
+    chart.
+        draw_series(
+            m.noise.iter()
+            .enumerate()
+            .map(|(bin, (max, noise))| {
+                let x = fscale(noise/max);
+                let y0 = bin as f32 * m.bin_size();
+                let y1 = y0 + m.bin_size();
+                let style = RED.mix(0.1).filled();
+                Rectangle::new([(x0, y0), (x, y1)], style)
+            })
+        )?;
 
     drawing.present()?;
     Ok(())
@@ -266,25 +275,110 @@ pub fn draw_fft(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::
 
 pub fn draw_noise(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
 
+    let nmax: f32 = m.noise.iter()
+            .map(|(max, noise)| *noise / *max)
+            .max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+    let caption = format!("Max Noise {:.2}", nmax);
+
+    let (x0, x1, fscale) = m.fft_scale[0];
+
+    let mut chart = ChartBuilder::on(&drawing)
+        .caption(caption, ("sans-serif", 20))
+        .set_label_area_size(LabelAreaPosition::Right, 40)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
+        .build_cartesian_2d(x0 .. x1, WHALE_VIEW)
+        .unwrap();
+
+    chart
+        .configure_mesh()
+        .axis_desc_style(("sans-serif", 30))
+        .x_labels(5)
+        .y_labels(5)
+        .draw()?;
+
+    chart
+        .draw_series(
+            m.noise
+            .iter()
+            .enumerate()
+            .map(|(bin, (power, noise))| {
+                let x = fscale(*noise / *power);
+                let y0 = bin as f32 * m.bin_size();
+                let y1 = y0 + m.bin_size();
+                let style = RED.filled();
+                Rectangle::new([(x0, y0), (x, y1)], style)
+            })
+        )?;
+           
+    drawing.present()?;
+    Ok(())
+}
+
+
+pub fn draw_power(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
+
+    let pmax: &f32 = m.noise.iter()
+            .map(|(max, _noise)| max)
+            .max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+    let caption = format!("Max Power {:.2}", *pmax);
+
+    let (x0, x1, fscale) = m.fft_scale[0];
+
+    let mut chart = ChartBuilder::on(&drawing)
+        .caption(caption, ("sans-serif", 20))
+        .set_label_area_size(LabelAreaPosition::Right, 40)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
+        .build_cartesian_2d(x0 .. x1, WHALE_VIEW)
+        .unwrap();
+
+    chart
+        .configure_mesh()
+        .axis_desc_style(("sans-serif", 30))
+        .x_labels(5)
+        .y_labels(5)
+        .draw()?;
+
+    chart
+        .draw_series(
+            m.noise
+            .iter()
+            .enumerate()
+            .map(|(bin, (power, _noise))| {
+                let x = fscale(*power / *pmax);
+                let y0 = bin as f32 * m.bin_size();
+                let y1 = y0 + m.bin_size();
+                let style = BLUE.filled();
+                Rectangle::new([(x0, y0), (x, y1)], style)
+            })
+        )?;
+           
+    drawing.present()?;
+    Ok(())
+}
+
+
+pub fn draw_bin(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error::Error>> {
+
     let spec = spectrogram(m);
+
+    let (y0, y1, fscale) = m.fft_scale[0];
 
     let bin = (m.freq / m.bin_size()) as usize;
     let vs = spec.iter().map(|f| f[bin]).collect::<Vec<f32>>();
-    let vmax: f32 = vs.iter().fold(0.0, |a, b| a.max(*b));
-
-    let mut noise = vs.clone();
-    noise.sort_by(|a, b| a.total_cmp(b));
-    let noise: f32 = noise[noise.len()/2] / vmax;
-
-    let noise = vec![ noise; spec.len() ];
+    let (vmax, noise) = m.noise[bin];
 
     let drawing = drawing.margin(0, 0, 0, 20);
     let caption = format!(
-        "{}  --  noise max {:.3}  median {:.3} ratio {:.3}"
+        "{} bin {:.1}hz .. {:.1}hz -- max {:.3}  noise {:.3} ratio {:.3} ({:.0}dB)"
         , m.aiff_name
+        , m.freq
+        , m.freq + m.bin_size()
         , vmax
-        , noise[0] * vmax
-        , 1.0 / noise[0]
+        , noise
+        , vmax/noise
+        , db(noise/vmax)
     );
 
     let chart = ChartBuilder::on(&drawing)
@@ -292,7 +386,7 @@ pub fn draw_noise(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error
         .y_label_area_size(40)
         .margin(5)
         .caption(caption, ("sans-serif", 30))
-        .build_cartesian_2d(0..4000usize, 0.0 .. 1.0f32)?;
+        .build_cartesian_2d(0..4000usize, y0 .. y1)?;
     
     let mut chart 
         = chart.set_secondary_coord(0..4000usize, 0.0 .. 1.0f32);
@@ -306,21 +400,23 @@ pub fn draw_noise(drawing: &Drawing, m: &Model) -> Result<(), Box<dyn std::error
         .y_labels(3)
         .draw()?;
 
+    let is_peak 
+        = |i| i > 0 && i < vs.len()-1 && vs[i] > vs[i-1] && vs[i] > vs[i+1];
 
     chart
         .draw_series(vs.iter().enumerate().map(|(i, v)| {
             let x0 = i * m.slide[0];
             let x1 = x0 + m.slide[0];
-            let style = BLUE.stroke_width(1);
-            Rectangle::new([(x0, 0.0), (x1, *v/vmax)], style)
+            let y = fscale(*v/vmax);
+            let style = if is_peak(i) {BLUE.filled()} else {BLUE.stroke_width(1)};
+            Rectangle::new([(x0, y0), (x1, y)], style)
         }))?;
 
-    chart.draw_secondary_series(
-        AreaSeries::new(
-            noise.iter().enumerate().map(|(i, n)| (i * m.slide[0], *n)),
-            0.0,
-            RED.mix(0.1).filled(),
+    chart.plotting_area().draw(&Rectangle::new(
+        [(0, y0), (4000, fscale(noise/vmax))],
+        RED.mix(0.1).filled(),
     ))?;
+
 
     drawing.present()?;
     Ok(())      
